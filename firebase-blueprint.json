@@ -1,0 +1,146 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "The core user profile containing stats, levels, and preferences.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "level": { "type": "number", "description": "Overall user level" },
+        "xp": { "type": "number", "description": "Total XP earned" },
+        "streak": { "type": "number" },
+        "lastActive": { "type": "string", "format": "date-time" },
+        "specialization": { "type": "string", "enum": ["SWE", "Cloud", "AI", "Fullstack"] },
+        "intensity": { "type": "string", "enum": ["casual", "balanced", "intense"] },
+        "weeklyHours": { "type": "number" },
+        "targetCompanies": { "type": "array", "items": { "type": "string" } },
+        "skillLevels": {
+          "type": "object",
+          "properties": {
+            "swe": { "type": "number" },
+            "cloud": { "type": "number" },
+            "ai": { "type": "number" }
+          }
+        }
+      },
+      "required": ["uid", "email", "level", "xp"]
+    },
+    "RoadmapNode": {
+      "title": "Roadmap Node",
+      "description": "A single skill or milestone in the progression tree.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string", "enum": ["SWE", "Cloud", "AI"] },
+        "dependencies": { "type": "array", "items": { "type": "string" } },
+        "xpReward": { "type": "number" },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "url": { "type": "string" },
+              "type": { "type": "string", "enum": ["video", "article", "course"] }
+            }
+          }
+        },
+        "status": { "type": "string", "enum": ["locked", "available", "completed"] },
+        "lectures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "completed": { "type": "boolean" },
+              "xpReward": { "type": "number" }
+            },
+            "required": ["id", "title", "completed", "xpReward"]
+          }
+        }
+      }
+    },
+    "XPLog": {
+      "title": "XP Log",
+      "description": "A record of XP earned by a user.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "amount": { "type": "number" },
+        "reason": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "MentorMessage": {
+      "title": "Mentor Message",
+      "description": "A message in the AI mentor chat.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      }
+    },
+    "PublicProfile": {
+      "title": "Public Profile",
+      "description": "Non-sensitive user data for leaderboards.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "level": { "type": "number" },
+        "xp": { "type": "number" },
+        "specialization": { "type": "string" }
+      },
+      "required": ["uid", "displayName", "level", "xp"]
+    },
+    "DailyQuest": {
+      "title": "Daily Quest",
+      "description": "A daily task for the user to earn XP.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "xp": { "type": "number" },
+        "type": { "type": "string", "enum": ["technical", "meta"] },
+        "date": { "type": "string", "format": "date" },
+        "completed": { "type": "boolean" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "xp", "type", "date", "completed"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profile data"
+    },
+    "/public_profiles/{uid}": {
+      "schema": "PublicProfile",
+      "description": "Publicly visible user data"
+    },
+    "/users/{uid}/roadmap/{nodeId}": {
+      "schema": "RoadmapNode",
+      "description": "User-specific roadmap progress"
+    },
+    "/users/{uid}/xp_logs/{logId}": {
+      "schema": "XPLog",
+      "description": "History of XP earnings"
+    },
+    "/users/{uid}/mentor_chat/{msgId}": {
+      "schema": "MentorMessage",
+      "description": "AI Mentor chat history"
+    },
+    "/users/{uid}/daily_quests/{questId}": {
+      "schema": "DailyQuest",
+      "description": "User-specific daily quests"
+    }
+  }
+}

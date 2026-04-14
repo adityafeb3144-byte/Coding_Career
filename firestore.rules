@@ -1,0 +1,124 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {uid}
+    // Fields:
+    //   - uid: string (required) - Unique user ID
+    //   - email: string (required) - User email
+    //   - level: number (required) - Overall user level
+    //   - xp: number (required) - Total XP earned
+    //   - streak: number (optional) - Active streak
+    //   - lastActive: string (optional) - ISO 8601 date string
+    //   - specialization: string (optional) - Career path
+    //   - intensity: string (optional) - Learning intensity
+    //   - lastMarketSkillAdded: string (optional) - ISO 8601 date string
+    //
+    // Collection: users/{uid}/roadmap
+    // Document ID: {nodeId}
+    // Fields:
+    //   - id: string (required) - Node ID
+    //   - title: string (required) - Skill title
+    //   - status: string (required) - locked, available, completed
+    //   - order: number (optional) - Sequential order
+    //
+    // Collection: users/{uid}/daily_quests
+    // Document ID: {questId}
+    // Fields:
+    //   - title: string (required) - Quest title
+    //   - xp: number (required) - XP reward
+    //   - type: string (required) - technical, meta
+    //   - date: string (required) - YYYY-MM-DD
+    //   - completed: bool (required) - Completion status
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.level is number &&
+             data.xp is number;
+    }
+
+    function isValidRoadmapNode(data) {
+      return data.title is string && data.title.size() > 0 &&
+             data.status in ['locked', 'available', 'completed'];
+    }
+
+    function isValidDailyQuest(data) {
+      return data.title is string && data.title.size() > 0 &&
+             data.xp is number && data.xp >= 0 &&
+             data.type in ['technical', 'meta'] &&
+             data.date is string &&
+             data.completed is bool;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid) && isValidUser(request.resource.data);
+      allow update: if isOwner(uid) && isValidUser(request.resource.data);
+      
+      match /roadmap/{nodeId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidRoadmapNode(request.resource.data);
+        allow update: if isOwner(uid) && isValidRoadmapNode(request.resource.data);
+        allow delete: if isOwner(uid);
+      }
+      
+      match /daily_quests/{questId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid) && isValidDailyQuest(request.resource.data);
+        allow update: if isOwner(uid) && isValidDailyQuest(request.resource.data);
+        allow delete: if isOwner(uid);
+      }
+      
+      match /xp_logs/{logId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid);
+      }
+      
+      match /mentor_chat/{msgId} {
+        allow read: if isOwner(uid);
+        allow create: if isOwner(uid);
+      }
+    }
+
+    match /public_profiles/{uid} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(uid);
+    }
+    
+    match /rankings/{rankId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // Allow public read for connection testing
+    match /test/connection {
+      allow read: if true;
+    }
+  }
+}
