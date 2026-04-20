@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { collection, query, onSnapshot, doc, serverTimestamp, getDocs, writeBatch } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, serverTimestamp, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'motion/react';
-import { Briefcase, MapPin, Building2, ExternalLink, Sparkles, RefreshCw, Star, ArrowRight, Zap, Target, GraduationCap } from 'lucide-react';
+import { Briefcase, MapPin, Building2, ExternalLink, Sparkles, RefreshCw, Star, ArrowRight, Zap, Target, GraduationCap, CheckCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { generateOpportunities } from '../lib/gemini';
 
@@ -100,6 +100,19 @@ export function Opportunities() {
     return `${Math.floor(hours / 24)}d ago`;
   };
 
+  const toggleComplete = async (oppId: string, currentState: boolean) => {
+    if (!profile) return;
+    try {
+      const oppRef = doc(db, 'users', profile.uid, 'opportunities', oppId);
+      await updateDoc(oppRef, {
+        completed: !currentState,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      console.error("Failed to toggle complete status:", error);
+    }
+  };
+
   if (!profile) return null;
 
   return (
@@ -149,7 +162,18 @@ export function Opportunities() {
                 transition={{ delay: i * 0.1 }}
                 layout
               >
-                <Card className="bg-zinc-900 border-zinc-800 hover:border-zinc-700 transition-all overflow-hidden h-full flex flex-col">
+                <Card className={cn(
+                  "bg-zinc-900 border-zinc-800 hover:border-zinc-700 transition-all overflow-hidden h-full flex flex-col relative",
+                  opp.completed && "opacity-60 grayscale-[0.5]"
+                )}>
+                  {opp.completed && (
+                    <div className="absolute inset-0 bg-zinc-950/20 backdrop-blur-[1px] flex items-center justify-center z-10 pointer-events-none">
+                      <div className="bg-emerald-500 text-black px-4 py-1 rounded-full font-black text-xs rotate-[-12deg] border-2 border-emerald-400 shadow-xl shadow-emerald-500/20">
+                        MISSION ACCOMPLISHED
+                      </div>
+                    </div>
+                  )}
+
                   <div className="bg-gradient-to-r from-emerald-500/10 to-transparent p-4 border-b border-white/5 flex justify-between items-center">
                     <div className="flex items-center gap-2">
                       <div className={cn(
@@ -219,21 +243,35 @@ export function Opportunities() {
                         </div>
                       </div>
                       
-                      <div className="pt-4 border-t border-zinc-800 flex items-center justify-between">
+                      <div className="pt-4 border-t border-zinc-800 flex items-center justify-between gap-4">
                         <div className="flex items-center gap-1 text-[10px] text-zinc-500 font-mono">
                           <Zap className="h-3 w-3 text-yellow-500" />
                           EST. REWARD: +250 XP
                         </div>
-                        <a 
-                          href={opp.url.startsWith('http') ? opp.url : `https://www.google.com/search?q=${encodeURIComponent(opp.title + " " + opp.company)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <Button size="sm" className="bg-white text-black hover:bg-zinc-200 group gap-2 h-8">
-                            VIEW DETAILS
-                            <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                        <div className="flex items-center gap-2">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => toggleComplete(opp.id, opp.completed)}
+                            className={cn(
+                              "h-8 border border-white/5",
+                              opp.completed ? "text-emerald-500 bg-emerald-500/10" : "text-zinc-500 hover:text-white"
+                            )}
+                          >
+                            <CheckCircle className={cn("h-4 w-4 mr-2", opp.completed && "fill-emerald-500")} />
+                            {opp.completed ? "Completed" : "Complete"}
                           </Button>
-                        </a>
+                          <a 
+                            href={opp.url.startsWith('http') ? opp.url : `https://www.google.com/search?q=${encodeURIComponent(opp.title + " " + opp.company)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Button size="sm" className="bg-white text-black hover:bg-zinc-200 group gap-2 h-8">
+                              VIEW DETAILS
+                              <ArrowRight className="h-4 w-4 group-hover:translate-x-1 transition-transform" />
+                            </Button>
+                          </a>
+                        </div>
                       </div>
                     </div>
                   </CardContent>

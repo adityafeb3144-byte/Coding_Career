@@ -149,6 +149,7 @@
         "requirements": { "type": "array", "items": { "type": "string" } },
         "url": { "type": "string" },
         "location": { "type": "string" },
+        "completed": { "type": "boolean", "description": "Whether the user has completed this opportunity" },
         "updatedAt": { "type": "string", "format": "date-time" }
       }
     }

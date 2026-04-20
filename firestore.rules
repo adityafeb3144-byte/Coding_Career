@@ -80,6 +80,7 @@ service cloud.firestore {
     function isValidOpportunity(data) {
       return data.title is string && data.company is string &&
              data.type is string && data.matchScore is number &&
+             (data.completed is bool || !data.keys().contains('completed')) &&
              (data.updatedAt is timestamp || data.updatedAt == null);
     }
 
