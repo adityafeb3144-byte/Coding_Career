@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'motion/react';
-import { Briefcase, MapPin, Building2, ExternalLink, Sparkles, RefreshCw, Star, ArrowRight, Zap, Target } from 'lucide-react';
+import { Briefcase, MapPin, Building2, ExternalLink, Sparkles, RefreshCw, Star, ArrowRight, Zap, Target, GraduationCap } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { generateOpportunities } from '../lib/gemini';
 
@@ -178,7 +178,14 @@ export function Opportunities() {
                         <Badge variant="outline" className="mb-2 border-zinc-700 text-zinc-500 text-[10px] font-mono">
                           {opp.type.toUpperCase()}
                         </Badge>
-                        <CardTitle className="text-xl font-black tracking-tight">{opp.title}</CardTitle>
+                        <CardTitle className="text-xl font-black tracking-tight flex items-center gap-2">
+                          {opp.type === 'Job' && <Briefcase className="h-5 w-5 text-zinc-400" />}
+                          {opp.type === 'Internship' && <Target className="h-5 w-5 text-zinc-400" />}
+                          {opp.type === 'Project' && <Zap className="h-5 w-5 text-zinc-400" />}
+                          {opp.type === 'Open Source' && <ExternalLink className="h-5 w-5 text-zinc-400" />}
+                          {opp.type === 'Education' && <GraduationCap className="h-5 w-5 text-zinc-400" />}
+                          {opp.title}
+                        </CardTitle>
                         <div className="flex items-center gap-2 text-zinc-500 mt-1">
                           <Building2 className="h-3 w-3" />
                           <span className="text-xs font-medium">{opp.company}</span>
@@ -238,9 +245,13 @@ export function Opportunities() {
               <div className="h-16 w-16 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-4 border border-zinc-800">
                 <Briefcase className="h-8 w-8 text-zinc-700" />
               </div>
-              <h3 className="text-xl font-bold text-zinc-300">Searching Career Horizon...</h3>
+              <h3 className="text-xl font-bold text-zinc-300">
+                {profile.level <= 2 ? "Begin Your Journey" : "Searching Career Horizon..."}
+              </h3>
               <p className="text-zinc-500 text-sm mt-2 max-w-sm mx-auto">
-                Complete more nodes in your Skill Tree to unlock hyper-personalized opportunities.
+                {profile.level <= 2 
+                  ? "Finish your first few Scratch chapters to unlock beginner-friendly challenges and student projects."
+                  : "Complete more nodes in your Skill Tree to unlock hyper-personalized opportunities."}
               </p>
               <Button 
                 variant="outline" 

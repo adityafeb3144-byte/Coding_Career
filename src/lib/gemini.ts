@@ -374,25 +374,34 @@ export const generateOpportunities = async (specialization: string, level: numbe
     
     TASK:
     Generate 4-6 personalized "Opportunities" for this user. 
-    Opportunities MUST be hyper-relevant to their specialization and their current level/skills.
+    Opportunities MUST be hyper-relevant to their specialization AND their current pedagogical level.
     
-    Types of Opportunities:
-    - Jobs: (e.g., Software Engineer I, Junior Cloud Architect)
-    - Internships: (If level < 5)
-    - Open Source: (Specific GitHub repo themes relevant to their skills)
-    - Projects: (Complex real-world project ideas they can build to bridge a skill gap)
+    SPECIAL HANDLING FOR BEGINNERS (Level 1-10):
+    If a user is Level 1-10 (e.g., learning Scratch, Logic, Basic Programming), you are FORBIDDEN from suggesting jobs at major tech companies or high-level internships. 
+    Instead, your "Opportunities" should be:
+    - Educational Challenges: (e.g., "Scratch Game Jam", "Code.org Logic Challenge")
+    - Foundational Projects: (e.g., "Build a Calculator in Scratch", "Create a Simple Maze Game")
+    - Peer Communities: (e.g., "Join a Beginner Study Group", "Contribute to Scratch Wiki")
+    - Verified Certifications: (e.g., "Complete CS50 Lecture 0 Achievement", "Obtain Logic Gates Badge")
+
+    Types of Opportunities (Allowed):
+    - "Job" (ONLY for Level 15+)
+    - "Internship" (ONLY for Level 10+)
+    - "Project" (Any Level)
+    - "Open Source" (Any Level - for documentation or 'first-timers' tags)
+    - "Education" (Any Level - for challenges and certifications)
     
     MATCHING LOGIC:
-    - matchScore (0-100): High score (80+) only if their completed skills cover >70% of the requirements.
-    - Low score (40-60): If it's a "Reach" opportunity that requires 1-2 skills they haven't finished yet.
-    - BE REALISTIC: Don't give Senior Architect roles to a Level 2 user.
+    - matchScore (0-100): High score (80+) only if their completed skills (like Scratch basics) directly enable the opportunity (like a Scratch Game Jam).
+    - NEVER suggest professional tools like "Kubernetes" or "Rust" to a user who only knows "Scratch".
+    - BE REALISTIC: Suggesting a career-level job to a Level 1 student is a CRITICAL ERROR.
     
     RETURN:
     A JSON array of objects, each with:
     - id: string (unique slug)
-    - title: string
-    - company: string (Use realistic tech names or "Open Source")
-    - type: string (one of: "Job", "Internship", "Project", "Open Source")
+    - title: string (Exciting and descriptive)
+    - company: string (Use realistic tech names, "Open Source Community", "Nexus Academy", or "Global Coding Challenge")
+    - type: string (one of: "Job", "Internship", "Project", "Open Source", "Education")
     - matchScore: number
     - description: string (Explain WHY this is a good match based on their specific completed chapters)
     - requirements: string[] (The core skills needed)
