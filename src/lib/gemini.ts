@@ -75,6 +75,10 @@ export const getMentorResponse = async (history: { role: string, content: string
     RE-SEQUENCING CAPABILITY:
     If you notice the user's roadmap has missing or incorrect 'order' numbers, you MUST use the 'update_roadmap_orders' tool to fix them.
     You can use the 'get_roadmap' tool to see the current nodes and their orders.
+
+    SYSTEM PROTOCOL FOR ADDING NODES:
+    When using 'add_roadmap_node', you MUST generate 8-12 high-quality lectures that are strictly derived from the Primary Source or academic curriculum for that specific topic.
+    Avoid generic titles like "Introduction" or "Conclusion" - use descriptive, engineering-centric titles.
   `;
 
   const getRoadmapTool: FunctionDeclaration = {
@@ -125,7 +129,7 @@ export const getMentorResponse = async (history: { role: string, content: string
           }
         }
       },
-      required: ["title", "description", "category", "order", "xpReward", "resources"]
+      required: ["title", "description", "category", "order", "xpReward", "lectures", "resources"]
     }
   };
 
@@ -192,7 +196,7 @@ export const generateInitialRoadmap = async (specialization: string, intensity: 
        - Cloud: Virtualization, Distributed Systems, AWS/GCP/Azure Architecture, Kubernetes, DevOps.
        - AI: Linear Algebra/Calculus, Probability, Machine Learning Fundamentals, Deep Learning, LLMs, AI Engineering.
     2. Nodes MUST be logically ordered from absolute basics to advanced mastery.
-    3. Each node MUST contain 10-15 specific "lectures" or sub-topics.
+    3. Each node MUST contain 10-15 specific "lectures" or sub-topics that follow the academic curriculum of the Primary Resource.
     4. Use a strict dependency chain to create a clear learning line.
     5. For 'resources', provide 2-3 options. The FIRST resource MUST be the 'Primary' (Academic Gold Standard).
     6. Return the roadmap as a JSON array of nodes.
@@ -201,6 +205,7 @@ export const generateInitialRoadmap = async (specialization: string, intensity: 
     9. PREFER: MIT OpenCourseWare, Harvard CS50, Stanford Online, freeCodeCamp, and Official Documentation.
     10. AVOID: Crash courses, "X in 10 minutes" videos, or low-depth tutorials.
     11. VERIFY: Ensure all URLs are valid and lead to comprehensive, engineering-grade content.
+    12. LECTURE QUALITY: Each lecture title must be technically specific (e.g., "Memory Management in C" instead of "Coding Basics").
   `;
 
   try {
@@ -248,7 +253,7 @@ export const generateInitialRoadmap = async (specialization: string, intensity: 
                 }
               }
             },
-            required: ["id", "title", "description", "category", "dependencies", "xpReward", "resources"]
+            required: ["id", "title", "description", "category", "dependencies", "xpReward", "lectures", "resources"]
           }
         }
       }
@@ -306,6 +311,53 @@ export const resequenceRoadmap = async (nodes: any[]) => {
   }
 };
 
+export const generateMarketIntelligence = async (specialization: string) => {
+  const model = "gemini-3-flash-preview";
+  const prompt = `
+    You are a Global Market Intelligence AI for Software Engineering.
+    Analyze current market trends for the specialization: "${specialization}".
+    
+    TASK:
+    Identify 2 highly trending, relevant, and critical skills or industry shifts that are happening RIGHT NOW (current month/year).
+    
+    RETURN:
+    A JSON array of 2 objects, each with:
+    - title: string (short, bold title like "RUST ADOPTION SURGE")
+    - description: string (1 sentence explaining the trend and recommending a skill)
+    - icon: string (one of: "trending", "target", "zap", "globe", "cpu")
+  `;
+
+  try {
+    const response = await callWithRetry(() => ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              description: { type: Type.STRING },
+              icon: { type: Type.STRING }
+            },
+            required: ["title", "description", "icon"]
+          }
+        }
+      }
+    }));
+
+    return JSON.parse(response.text || "[]");
+  } catch (error) {
+    console.error("Gemini API Error (generateMarketIntelligence):", error);
+    return [
+      { title: "RUST ADOPTION SURGE", description: "Big Tech is shifting core services to Rust for memory safety.", icon: "trending" },
+      { title: "LLM AGENT DEMAND", description: "Companies are seeking engineers who can build autonomous AI agents.", icon: "target" }
+    ];
+  }
+};
+
 export const generateMarketDemandSkill = async (specialization: string, currentRoadmap: any[]) => {
   const model = "gemini-3-flash-preview";
   const prompt = `
@@ -315,7 +367,10 @@ export const generateMarketDemandSkill = async (specialization: string, currentR
     
     Identify ONE highly trending, critical skill or tool that is currently in high demand in the market but is NOT in their roadmap.
     
-    CRITICAL: The learning resources MUST be of high academic quality (MIT OCW, freeCodeCamp, official docs).
+    CRITICAL: 
+    1. The learning resources MUST be of high academic quality (MIT OCW, freeCodeCamp, official docs).
+    2. You MUST provide 8-12 specific, logical "lectures" for this skill that follow a pedagogical flow.
+    3. Each lecture title must be descriptive and distinct.
     
     Return a JSON object for a new roadmap node.
   `;
@@ -334,6 +389,19 @@ export const generateMarketDemandSkill = async (specialization: string, currentR
             category: { type: Type.STRING },
             xpReward: { type: Type.NUMBER },
             dependencies: { type: Type.ARRAY, items: { type: Type.STRING } },
+            lectures: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  id: { type: Type.STRING },
+                  title: { type: Type.STRING },
+                  completed: { type: Type.BOOLEAN },
+                  xpReward: { type: Type.NUMBER }
+                },
+                required: ["id", "title", "completed", "xpReward"]
+              }
+            },
             resources: {
               type: Type.ARRAY,
               items: {
@@ -346,7 +414,7 @@ export const generateMarketDemandSkill = async (specialization: string, currentR
               }
             }
           },
-          required: ["title", "description", "category", "xpReward", "dependencies", "resources"]
+          required: ["title", "description", "category", "xpReward", "dependencies", "lectures", "resources"]
         }
       }
     }));
@@ -422,13 +490,19 @@ export const generateDailyQuests = async (specialization: string, availableNodes
 
 export const analyzeQuestSubmission = async (questTitle: string, fileContent: string, fileName: string) => {
   const model = "gemini-3-flash-preview";
+  
+  // Truncate file content to prevent token overflow (approx 10k characters)
+  const truncatedContent = fileContent.length > 10000 
+    ? fileContent.substring(0, 10000) + "\n... (content truncated for analysis)"
+    : fileContent;
+
   const prompt = `
     You are an Elite Engineering Mentor. 
     The user has submitted a file for their daily quest: "${questTitle}".
     
     FILE NAME: ${fileName}
     FILE CONTENT:
-    ${fileContent}
+    ${truncatedContent}
     
     TASK:
     1. Analyze if the content of the file reasonably demonstrates completion of the quest.
@@ -460,9 +534,24 @@ export const analyzeQuestSubmission = async (questTitle: string, fileContent: st
       }
     }));
 
-    return JSON.parse(response.text || "{}");
-  } catch (error) {
+    const text = response.text || "{}";
+    try {
+      return JSON.parse(text);
+    } catch (parseError) {
+      console.error("JSON Parse Error in analyzeQuestSubmission:", text);
+      return { 
+        isComplete: false, 
+        feedback: "The mentor had trouble reading your submission format. Please ensure it's a text-based file.",
+        score: 0 
+      };
+    }
+  } catch (error: any) {
     console.error("Gemini API Error (analyzeQuestSubmission):", error);
-    return { isComplete: false, feedback: "Analysis failed. Please try again.", score: 0 };
+    // Provide a more descriptive error message if possible
+    const errorMessage = error?.message?.includes("quota") 
+      ? "The AI Mentor is currently overloaded (Quota Exceeded). Please try again in 60 seconds."
+      : "Analysis failed. Please try again with a smaller or more readable file.";
+      
+    return { isComplete: false, feedback: errorMessage, score: 0 };
   }
 };

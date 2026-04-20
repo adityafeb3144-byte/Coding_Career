@@ -94,7 +94,7 @@ function AppContent() {
               }
             }
             
-            setProfile(data);
+            setProfile({ ...data, uid: currentUser.uid });
           } else {
             setProfile(null);
           }

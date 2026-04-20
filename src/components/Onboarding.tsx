@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useStore } from '../store/useStore';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -60,6 +60,7 @@ export function Onboarding() {
       setProfile(profileData as any);
     } catch (error) {
       console.error("Onboarding failed", error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
     } finally {
       setLoading(false);
     }

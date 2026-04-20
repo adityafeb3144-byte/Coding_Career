@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'motion/react';
 import { Zap, Target, Award, TrendingUp, Clock, Flame, Sparkles, MessageSquare, CheckCircle2, Trophy, Globe, RefreshCw, FileUp, FileCheck, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { generateDailyQuests, generateInitialRoadmap, analyzeQuestSubmission } from '../lib/gemini';
+import { generateDailyQuests, generateInitialRoadmap, analyzeQuestSubmission, generateMarketIntelligence } from '../lib/gemini';
 
 export function Dashboard() {
   const { profile, setActiveTab, setMentorPrompt } = useStore();
@@ -22,7 +22,10 @@ export function Dashboard() {
   const [hasRoadmap, setHasRoadmap] = useState<boolean | null>(null);
   const [xpGain, setXpGain] = useState<{ amount: number, id: string } | null>(null);
   const [analyzingQuestId, setAnalyzingQuestId] = useState<string | null>(null);
+  const [marketTrends, setMarketTrends] = useState<any[]>([]);
+  const [loadingMarket, setLoadingMarket] = useState(false);
   const isGeneratingRef = useRef(false);
+  const isGeneratingMarketRef = useRef(false);
 
   useEffect(() => {
     if (!profile) return;
@@ -88,6 +91,50 @@ export function Dashboard() {
       }
     };
     fetchRank();
+
+    // Market Intelligence Sync
+    const syncMarketIntelligence = async () => {
+      if (isGeneratingMarketRef.current) return;
+      
+      try {
+        const marketRef = doc(db, 'users', profile.uid, 'intelligence', 'market_trends');
+        const snap = await getDocs(query(collection(db, 'users', profile.uid, 'intelligence')));
+        const trendDoc = snap.docs.find(d => d.id === 'market_trends');
+        
+        const now = Date.now();
+        const twentyFourHours = 24 * 60 * 60 * 1000;
+        
+        if (trendDoc) {
+          const data = trendDoc.data();
+          const lastUpdated = data.updatedAt?.toMillis?.() || 0;
+          
+          if (now - lastUpdated < twentyFourHours) {
+            setMarketTrends(data.trends || []);
+            return;
+          }
+        }
+
+        // Refresh trends
+        isGeneratingMarketRef.current = true;
+        setLoadingMarket(true);
+        const newTrends = await generateMarketIntelligence(profile.specialization);
+        
+        const batch = writeBatch(db);
+        batch.set(marketRef, {
+          trends: newTrends,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        await batch.commit();
+        
+        setMarketTrends(newTrends);
+      } catch (error) {
+        console.error("Market intelligence sync failed", error);
+      } finally {
+        isGeneratingMarketRef.current = false;
+        setLoadingMarket(false);
+      }
+    };
+    syncMarketIntelligence();
 
     return () => {
       unsubscribe();
@@ -202,8 +249,9 @@ export function Dashboard() {
     try {
       // Read file content
       const reader = new FileReader();
-      const fileContent = await new Promise<string>((resolve) => {
+      const fileContent = await new Promise<string>((resolve, reject) => {
         reader.onload = (e) => resolve(e.target?.result as string);
+        reader.onerror = () => reject(new Error("Failed to read file. It might be too large or corrupted."));
         reader.readAsText(file);
       });
 
@@ -219,8 +267,13 @@ export function Dashboard() {
           score: analysis.score
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Quest analysis failed", error);
+      // Update with a local error message if the API call didn't even reach the helper
+      await updateDoc(doc(db, 'users', profile.uid, 'daily_quests', quest.id), {
+        feedback: error.message || "Failed to analyze submission. Please ensure the file is text-based and try again.",
+        score: 0
+      });
     } finally {
       setAnalyzingQuestId(null);
     }
@@ -663,27 +716,45 @@ export function Dashboard() {
           <Card className="bg-zinc-900 border-zinc-800 text-white">
             <CardContent className="p-6">
               <div className="space-y-4">
-                <div className="flex gap-4">
-                  <div className="h-10 w-10 rounded bg-emerald-500/10 flex items-center justify-center shrink-0">
-                    <TrendingUp className="h-5 w-5 text-emerald-500" />
+                {loadingMarket ? (
+                  <div className="space-y-4">
+                    <div className="flex gap-4 animate-pulse">
+                      <div className="h-10 w-10 rounded bg-zinc-800 shrink-0" />
+                      <div className="space-y-2 flex-1">
+                        <div className="h-4 bg-zinc-800 rounded w-1/2" />
+                        <div className="h-3 bg-zinc-800 rounded w-full" />
+                      </div>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-bold">RUST ADOPTION SURGE</p>
-                    <p className="text-xs text-zinc-500">Big Tech is shifting core services to Rust. Consider adding 'Memory Safety' to your roadmap.</p>
-                  </div>
-                </div>
-                <div className="flex gap-4">
-                  <div className="h-10 w-10 rounded bg-blue-500/10 flex items-center justify-center shrink-0">
-                    <Target className="h-5 w-5 text-blue-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold">LLM AGENT DEMAND</p>
-                    <p className="text-xs text-zinc-500">Startups are prioritizing engineers who can build autonomous agents. New nodes available in AI branch.</p>
-                  </div>
-                </div>
+                ) : marketTrends.length > 0 ? (
+                  marketTrends.map((trend, i) => (
+                    <div key={i} className="flex gap-4">
+                      <div className={cn(
+                        "h-10 w-10 rounded flex items-center justify-center shrink-0",
+                        trend.icon === 'trending' ? "bg-emerald-500/10 text-emerald-500" :
+                        trend.icon === 'target' ? "bg-blue-500/10 text-blue-500" :
+                        trend.icon === 'zap' ? "bg-yellow-500/10 text-yellow-500" :
+                        "bg-purple-500/10 text-purple-500"
+                      )}>
+                        {trend.icon === 'trending' ? <TrendingUp className="h-5 w-5" /> :
+                         trend.icon === 'target' ? <Target className="h-5 w-5" /> :
+                         trend.icon === 'zap' ? <Zap className="h-5 w-5" /> :
+                         trend.icon === 'cpu' ? <Zap className="h-5 w-5" /> : // Fallback
+                         <Globe className="h-5 w-5" />}
+                      </div>
+                      <div>
+                        <p className="text-sm font-bold uppercase tracking-tight">{trend.title}</p>
+                        <p className="text-xs text-zinc-500 leading-relaxed">{trend.description}</p>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-zinc-500 italic">No market trends available at this time.</p>
+                )}
+                
                 <Button 
                   onClick={handleAnalyzeMarket}
-                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-6 rounded-xl"
+                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-6 rounded-xl mt-4"
                 >
                   <Sparkles className="mr-2 h-5 w-5" />
                   ANALYZE MARKET & UPDATE ROADMAP

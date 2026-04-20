@@ -24,21 +24,23 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, CheckCircle2, Play, ExternalLink, ZoomIn, ZoomOut, Maximize, RefreshCw, Sparkles, Zap } from 'lucide-react';
+import { Lock, CheckCircle2, Play, ExternalLink, ZoomIn, ZoomOut, Maximize, RefreshCw, Sparkles, Zap, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { generateInitialRoadmap } from '../lib/gemini';
-
-const dagreGraph = new dagre.graphlib.Graph();
-dagreGraph.setDefaultEdgeLabel(() => ({}));
 
 const nodeWidth = 250;
 const nodeHeight = 100;
 
 const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
+  if (nodes.length === 0) return { nodes, edges };
+
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+  
   dagreGraph.setGraph({ 
     rankdir: 'TB', 
-    nodesep: 150, // Increased for better branching visibility
-    ranksep: 180, // Increased for clear hierarchical levels
+    nodesep: 150,
+    ranksep: 180,
     marginx: 100,
     marginy: 100
   });
@@ -55,10 +57,12 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[]) => {
 
   nodes.forEach((node) => {
     const nodeWithPosition = dagreGraph.node(node.id);
-    node.position = {
-      x: nodeWithPosition.x - nodeWidth / 2,
-      y: nodeWithPosition.y - nodeHeight / 2,
-    };
+    if (nodeWithPosition) {
+      node.position = {
+        x: nodeWithPosition.x - nodeWidth / 2,
+        y: nodeWithPosition.y - nodeHeight / 2,
+      };
+    }
   });
 
   return { nodes, edges };
@@ -226,9 +230,10 @@ function RoadmapContent() {
   };
 
   useEffect(() => {
-    if (!profile) return;
+    if (!profile || !profile.uid) return;
 
-    const unsubscribe = onSnapshot(collection(db, 'users', profile.uid, 'roadmap'), (snapshot) => {
+    const roadmapRef = collection(db, 'users', profile.uid, 'roadmap');
+    const unsubscribe = onSnapshot(roadmapRef, (snapshot) => {
       const initialNodes: Node[] = [];
       const initialEdges: Edge[] = [];
 
@@ -598,7 +603,7 @@ function RoadmapContent() {
 
             <div className="space-y-6">
               {/* Lectures Section */}
-              {selectedNode.lectures && selectedNode.lectures.length > 0 && (
+              {selectedNode.lectures && selectedNode.lectures.length > 0 ? (
                 <div>
                   <h4 className="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-3">Course Lectures</h4>
                   <div className="space-y-2">
@@ -633,6 +638,16 @@ function RoadmapContent() {
                       </div>
                     ))}
                   </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-yellow-500/5 border border-yellow-500/20">
+                  <div className="flex items-center gap-2 mb-2 text-yellow-500">
+                    <AlertCircle className="h-4 w-4" />
+                    <span className="text-xs font-bold uppercase tracking-widest">Data Incomplete</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-400 mb-3 leading-relaxed">
+                    This skill node was initialized without lecture data. Please use the "REBUILD TREE" button at the top to sync your profile.
+                  </p>
                 </div>
               )}
 

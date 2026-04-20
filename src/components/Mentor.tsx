@@ -77,7 +77,7 @@ export function Mentor() {
       // Add AI message to Firestore
       await addDoc(collection(db, 'users', profile.uid, 'mentor_chat'), {
         role: 'assistant',
-        content: aiText || "I've processed your request.",
+        content: aiText || "Consultation complete. I've updated your trajectory accordingly.",
         timestamp: serverTimestamp()
       });
 
@@ -95,13 +95,6 @@ export function Mentor() {
               dependencies: args.dependencies || [],
               order: args.order
             });
-
-            // Add a system message about the new node
-            await addDoc(collection(db, 'users', profile.uid, 'mentor_chat'), {
-              role: 'assistant',
-              content: `🚀 **SYSTEM UPDATE**: I've added **${args.title}** to your roadmap. Check your Skill Tree!`,
-              timestamp: serverTimestamp()
-            });
           } else if (call.name === 'update_roadmap_orders') {
             const args = call.args as any;
             for (const update of args.updates) {
@@ -109,12 +102,6 @@ export function Mentor() {
                 order: update.order
               });
             }
-
-            await addDoc(collection(db, 'users', profile.uid, 'mentor_chat'), {
-              role: 'assistant',
-              content: `🔄 **SYSTEM UPDATE**: I've re-sequenced your roadmap for better learning flow.`,
-              timestamp: serverTimestamp()
-            });
           } else if (call.name === 'get_roadmap') {
             const roadmapSnap = await getDocs(collection(db, 'users', profile.uid, 'roadmap'));
             const roadmapData = roadmapSnap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -122,12 +109,6 @@ export function Mentor() {
             // We provide this data back to the AI by adding a hidden system message or just logging it.
             // For now, we'll log it and tell the AI it's been retrieved.
             console.log("Roadmap retrieved for AI:", roadmapData);
-            
-            await addDoc(collection(db, 'users', profile.uid, 'mentor_chat'), {
-              role: 'assistant',
-              content: `📊 **SYSTEM UPDATE**: I've analyzed your current roadmap structure.`,
-              timestamp: serverTimestamp()
-            });
           }
         }
       }
