@@ -10,6 +10,7 @@ import { auth, db, signInWithGoogle, googleProvider, OperationType, handleFirest
 import { useStore } from './store/useStore';
 import { Dashboard } from '@/src/components/Dashboard';
 import { Roadmap } from '@/src/components/Roadmap';
+import { Opportunities } from '@/src/components/Opportunities';
 import { Mentor } from '@/src/components/Mentor';
 import { Leaderboard } from '@/src/components/Leaderboard';
 import { Onboarding } from '@/src/components/Onboarding';
@@ -17,7 +18,7 @@ import { PathSequencer } from '@/src/components/PathSequencer';
 import { ErrorBoundary } from '@/src/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Layout, LayoutDashboard, Map, MessageSquare, Trophy, LogOut, User as UserIcon, Zap, Sparkles, AlertCircle, CheckCircle2, Globe, Menu, X } from 'lucide-react';
+import { Layout, LayoutDashboard, Map, MessageSquare, Trophy, LogOut, User as UserIcon, Zap, Sparkles, AlertCircle, CheckCircle2, Globe, Menu, X, Briefcase } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 
@@ -365,6 +366,12 @@ function AppContent() {
             icon={<Trophy className="h-5 w-5" />} 
             label="War Room" 
           />
+          <NavItem 
+            active={activeTab === 'opportunities'} 
+            onClick={() => { setActiveTab('opportunities'); setIsMobileMenuOpen(false); }} 
+            icon={<Briefcase className="h-5 w-5" />} 
+            label="Target Opportunities" 
+          />
         </nav>
 
         <div className="mt-6 p-4 rounded-xl bg-zinc-800/30 border border-zinc-800">
@@ -416,6 +423,7 @@ function AppContent() {
           >
             {activeTab === 'dashboard' && <Dashboard />}
             {activeTab === 'roadmap' && <Roadmap />}
+            {activeTab === 'opportunities' && <Opportunities />}
             {activeTab === 'mentor' && <Mentor />}
             {activeTab === 'leaderboard' && <Leaderboard />}
           </motion.div>

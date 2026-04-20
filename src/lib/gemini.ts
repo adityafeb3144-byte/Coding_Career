@@ -358,6 +358,84 @@ export const generateMarketIntelligence = async (specialization: string) => {
   }
 };
 
+export const generateOpportunities = async (specialization: string, level: number, completedNodes: any[]) => {
+  const model = "gemini-3-flash-preview";
+  
+  const skillSummary = completedNodes.length > 0 
+    ? completedNodes.map(n => `- ${n.title} (${n.category || 'General'})`).join('\n')
+    : "No major chapters completed yet. Focus on foundational opportunities.";
+
+  const prompt = `
+    You are a Career Opportunity AI. 
+    The user is a ${specialization} Developer at Level ${level}.
+    
+    COMPLETED SKILLS & CHAPTERS:
+    ${skillSummary}
+    
+    TASK:
+    Generate 4-6 personalized "Opportunities" for this user. 
+    Opportunities MUST be hyper-relevant to their specialization and their current level/skills.
+    
+    Types of Opportunities:
+    - Jobs: (e.g., Software Engineer I, Junior Cloud Architect)
+    - Internships: (If level < 5)
+    - Open Source: (Specific GitHub repo themes relevant to their skills)
+    - Projects: (Complex real-world project ideas they can build to bridge a skill gap)
+    
+    MATCHING LOGIC:
+    - matchScore (0-100): High score (80+) only if their completed skills cover >70% of the requirements.
+    - Low score (40-60): If it's a "Reach" opportunity that requires 1-2 skills they haven't finished yet.
+    - BE REALISTIC: Don't give Senior Architect roles to a Level 2 user.
+    
+    RETURN:
+    A JSON array of objects, each with:
+    - id: string (unique slug)
+    - title: string
+    - company: string (Use realistic tech names or "Open Source")
+    - type: string (one of: "Job", "Internship", "Project", "Open Source")
+    - matchScore: number
+    - description: string (Explain WHY this is a good match based on their specific completed chapters)
+    - requirements: string[] (The core skills needed)
+    - missingSkills: string[] (Skills from requirements that the user has NOT completed yet)
+    - url: string (A valid search URL or repo link)
+    - location: string (Remote/Hybrid/City)
+  `;
+
+  try {
+    const response = await callWithRetry(() => ai.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              id: { type: Type.STRING },
+              title: { type: Type.STRING },
+              company: { type: Type.STRING },
+              type: { type: Type.STRING },
+              matchScore: { type: Type.NUMBER },
+              description: { type: Type.STRING },
+              requirements: { type: Type.ARRAY, items: { type: Type.STRING } },
+              missingSkills: { type: Type.ARRAY, items: { type: Type.STRING } },
+              url: { type: Type.STRING },
+              location: { type: Type.STRING }
+            },
+            required: ["id", "title", "company", "type", "matchScore", "description", "requirements", "missingSkills", "url", "location"]
+          }
+        }
+      }
+    }));
+
+    return JSON.parse(response.text || "[]");
+  } catch (error) {
+    console.error("Gemini API Error (generateOpportunities):", error);
+    return [];
+  }
+};
+
 export const generateMarketDemandSkill = async (specialization: string, currentRoadmap: any[]) => {
   const model = "gemini-3-flash-preview";
   const prompt = `

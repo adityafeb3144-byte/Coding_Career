@@ -134,6 +134,23 @@
         },
         "updatedAt": { "type": "string", "format": "date-time" }
       }
+    },
+    "Opportunity": {
+      "title": "Opportunity",
+      "description": "Tailored career opportunities (jobs, internships, projects) for the user.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "company": { "type": "string" },
+        "type": { "type": "string", "enum": ["Job", "Internship", "Project", "Open Source"] },
+        "matchScore": { "type": "number" },
+        "description": { "type": "string" },
+        "requirements": { "type": "array", "items": { "type": "string" } },
+        "url": { "type": "string" },
+        "location": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
@@ -164,6 +181,10 @@
     "/users/{uid}/intelligence/{intelId}": {
       "schema": "MarketIntelligence",
       "description": "Dynamic market trends and AI insights"
+    },
+    "/users/{uid}/opportunities/{oppId}": {
+      "schema": "Opportunity",
+      "description": "Personalized career opportunities"
     }
   }
 }
