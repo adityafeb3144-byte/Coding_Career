@@ -115,6 +115,25 @@
         "timestamp": { "type": "string", "format": "date-time" }
       },
       "required": ["title", "xp", "type", "date", "completed"]
+    },
+    "MarketIntelligence": {
+      "title": "Market Intelligence",
+      "description": "Saved market trends and insights for the user.",
+      "type": "object",
+      "properties": {
+        "trends": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "description": { "type": "string" },
+              "icon": { "type": "string" }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
@@ -141,6 +160,10 @@
     "/users/{uid}/daily_quests/{questId}": {
       "schema": "DailyQuest",
       "description": "User-specific daily quests"
+    },
+    "/users/{uid}/intelligence/{intelId}": {
+      "schema": "MarketIntelligence",
+      "description": "Dynamic market trends and AI insights"
     }
   }
 }
