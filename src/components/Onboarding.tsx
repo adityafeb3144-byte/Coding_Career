@@ -45,6 +45,7 @@ export function Onboarding() {
         photoURL: user.photoURL,
         level: 1,
         xp: 0,
+        marketPower: 0,
         specialization: specialization
       });
       

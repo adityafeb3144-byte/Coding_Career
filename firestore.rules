@@ -56,7 +56,8 @@ service cloud.firestore {
     function isValidUser(data) {
       return data.uid == request.auth.uid &&
              data.level is number &&
-             data.xp is number;
+             data.xp is number &&
+             (data.marketPower is number || !data.keys().contains('marketPower'));
     }
 
     function isValidRoadmapNode(data) {
@@ -67,21 +68,17 @@ service cloud.firestore {
     function isValidDailyQuest(data) {
       return data.title is string && data.title.size() > 0 &&
              data.xp is number && data.xp >= 0 &&
-             data.type in ['technical', 'meta'] &&
-             data.date is string &&
-             data.completed is bool;
+             (data.completed is bool || !data.keys().contains('completed'));
     }
 
     function isValidIntelligence(data) {
-      return data.trends is list &&
-             (data.updatedAt is timestamp || data.updatedAt == null);
+      return true;
     }
 
     function isValidOpportunity(data) {
       return data.title is string && data.company is string &&
              data.type is string && data.matchScore is number &&
-             (data.completed is bool || !data.keys().contains('completed')) &&
-             (data.updatedAt is timestamp || data.updatedAt == null);
+             (data.updatedAt is timestamp || data.updatedAt == null || data.updatedAt is string);
     }
 
     // ===============================================================
@@ -89,46 +86,10 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{uid} {
-      allow read: if isOwner(uid);
-      allow create: if isOwner(uid) && isValidUser(request.resource.data);
-      allow update: if isOwner(uid) && isValidUser(request.resource.data);
+      allow read, write: if isOwner(uid);
       
-      match /roadmap/{nodeId} {
-        allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && isValidRoadmapNode(request.resource.data);
-        allow update: if isOwner(uid) && isValidRoadmapNode(request.resource.data);
-        allow delete: if isOwner(uid);
-      }
-      
-      match /daily_quests/{questId} {
-        allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && isValidDailyQuest(request.resource.data);
-        allow update: if isOwner(uid) && isValidDailyQuest(request.resource.data);
-        allow delete: if isOwner(uid);
-      }
-
-      match /intelligence/{intelId} {
-        allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && isValidIntelligence(request.resource.data);
-        allow update: if isOwner(uid) && isValidIntelligence(request.resource.data);
-        allow delete: if isOwner(uid);
-      }
-
-      match /opportunities/{oppId} {
-        allow read: if isOwner(uid);
-        allow create: if isOwner(uid) && isValidOpportunity(request.resource.data);
-        allow update: if isOwner(uid) && isValidOpportunity(request.resource.data);
-        allow delete: if isOwner(uid);
-      }
-      
-      match /xp_logs/{logId} {
-        allow read: if isOwner(uid);
-        allow create: if isOwner(uid);
-      }
-      
-      match /mentor_chat/{msgId} {
-        allow read: if isOwner(uid);
-        allow create: if isOwner(uid);
+      match /{allSubcollections=**} {
+        allow read, write: if isOwner(uid);
       }
     }
 

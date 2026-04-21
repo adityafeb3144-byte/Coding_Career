@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { collection, query, onSnapshot, doc, updateDoc, increment, addDoc, serverTimestamp, getDocs, deleteDoc, writeBatch, getCountFromServer, where } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, updateDoc, increment, addDoc, serverTimestamp, getDocs, deleteDoc, writeBatch, getCountFromServer, where, getDoc, setDoc } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, calculateStreak } from '../lib/firebase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
@@ -8,9 +8,10 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'motion/react';
-import { Zap, Target, Award, TrendingUp, Clock, Flame, Sparkles, MessageSquare, CheckCircle2, Trophy, Globe, RefreshCw, FileUp, FileCheck, AlertCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Zap, Target, Award, TrendingUp, Clock, Flame, Sparkles, MessageSquare, CheckCircle2, Trophy, Globe, RefreshCw, FileUp, FileCheck, AlertCircle, Info, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { generateDailyQuests, generateInitialRoadmap, analyzeQuestSubmission, generateMarketIntelligence } from '../lib/gemini';
+import { generateDailyQuests, generateInitialRoadmap, analyzeQuestSubmission, generateMarketIntelligence, getMentorResponse } from '../lib/gemini';
+import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Tooltip } from 'recharts';
 
 export function Dashboard() {
   const { profile, setActiveTab, setMentorPrompt } = useStore();
@@ -27,6 +28,139 @@ export function Dashboard() {
   const [loadingMarket, setLoadingMarket] = useState(false);
   const isGeneratingRef = useRef(false);
   const isGeneratingMarketRef = useRef(false);
+
+  // Market Intelligence Sync
+  const syncMarketIntelligence = async () => {
+    if (!profile || isGeneratingMarketRef.current) return;
+    
+    try {
+      console.log("[MarketIntelligence] Sync Init...");
+      const marketRef = doc(db, 'users', profile.uid, 'intelligence', 'market_trends');
+      const trendSnap = await getDocs(query(collection(db, 'users', profile.uid, 'intelligence')));
+      const trendDoc = trendSnap.docs.find(d => d.id === 'market_trends');
+      
+      const now = Date.now();
+      const twentyFourHours = 24 * 60 * 60 * 1000;
+      
+      if (trendDoc && trendDoc.exists()) {
+        const data = trendDoc.data();
+        const lastUpdated = data.updatedAt?.toMillis?.() || 0;
+        
+        // If it's fresh enough and has data
+        if (now - lastUpdated < twentyFourHours && data.trends && data.trends.length >= 3) {
+          console.log("[MarketIntelligence] Using cached trends");
+          setMarketTrends(data.trends);
+          return;
+        }
+      }
+
+      // Refresh trends
+      console.log("[MarketIntelligence] Requesting AI Generation...");
+      isGeneratingMarketRef.current = true;
+      setLoadingMarket(true);
+      
+      // Safety timeout for loading state
+      const timeout = setTimeout(() => {
+        setLoadingMarket(false);
+        isGeneratingMarketRef.current = false;
+      }, 15000);
+
+      const newTrends = await generateMarketIntelligence(profile.specialization || 'Software Engineering');
+      clearTimeout(timeout);
+      
+      if (newTrends && newTrends.length >= 3) {
+        const batch = writeBatch(db);
+        batch.set(marketRef, {
+          trends: newTrends,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        await batch.commit();
+        setMarketTrends(newTrends);
+        console.log("[MarketIntelligence] Sync Complete", newTrends);
+      } else {
+        console.warn("[MarketIntelligence] AI returned insufficient trends");
+      }
+    } catch (error) {
+      console.error("[MarketIntelligence] Sync Failed", error);
+    } finally {
+      isGeneratingMarketRef.current = false;
+      setLoadingMarket(false);
+    }
+  };
+
+  const [loadingAdvisory, setLoadingAdvisory] = useState(false);
+  const [advisory, setAdvisory] = useState<{ directive: string, advisory: string } | null>(null);
+
+  // Strategic Advisory Sync
+  const syncStrategicAdvisory = async () => {
+    if (!profile?.uid || loadingAdvisory) return;
+    
+    setLoadingAdvisory(true);
+    try {
+      const uid = profile.uid.trim();
+      if (!uid) {
+        console.warn("[StrategicMentor] UID is empty string, skipping sync.");
+        return;
+      }
+      const path = `users/${uid}/intelligence/strategy_advisory`;
+      console.log(`[StrategicMentor] Fetching dynamic advisory for ${path}...`);
+      const history = [
+        { role: 'user', content: `Provide a 2-sentence highly critical strategic update for my career path as a ${profile.specialization}. 
+        Format as JSON only without markdown code blocks: { "directive": "One high-impact command", "advisory": "One context-aware market observation" }` }
+      ];
+      
+      const response = await getMentorResponse(history, profile);
+      const text = typeof response === 'string' ? response : response.text;
+      
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const data = JSON.parse(jsonMatch[0]);
+        setAdvisory(data);
+        
+        const docRef = doc(db, 'users', profile.uid.trim(), 'intelligence', 'strategy_advisory');
+        await setDoc(docRef, {
+          ...data,
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+        console.log("[StrategicMentor] Advisory saved successfully.");
+      }
+    } catch (error: any) {
+      console.error(`[StrategicMentor] Advisory fetch failed at users/${profile?.uid}/intelligence/strategy_advisory:`, error);
+      if (error?.message) {
+        console.error("[StrategicMentor] Error Details:", error.message);
+      }
+    } finally {
+      setLoadingAdvisory(false);
+    }
+  };
+
+  useEffect(() => {
+    const loadAdvisory = async () => {
+      if (!profile?.uid) return;
+      try {
+        const uid = profile.uid.trim();
+        if (!uid) return;
+        const path = `users/${uid}/intelligence/strategy_advisory`;
+        const docSnap = await getDoc(doc(db, 'users', uid, 'intelligence', 'strategy_advisory'));
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          const lastUpdated = data.updatedAt?.toMillis?.() || 0;
+          const twelveHours = 12 * 60 * 60 * 1000;
+          
+          if (Date.now() - lastUpdated < twelveHours) {
+            setAdvisory({ directive: data.directive, advisory: data.advisory });
+          } else {
+            syncStrategicAdvisory();
+          }
+        } else {
+          syncStrategicAdvisory();
+        }
+      } catch (err) {
+        console.error(`[StrategicMentor] Initial load failed for users/${profile?.uid}/intelligence/strategy_advisory:`, err);
+      }
+    };
+    loadAdvisory();
+  }, [profile]);
 
   useEffect(() => {
     if (!profile) return;
@@ -85,9 +219,10 @@ export function Dashboard() {
         const totalSnapshot = await getCountFromServer(totalColl);
         setNexusTotal(totalSnapshot.data().count);
 
+        // Rank by Market Power instead of raw XP
         const rankQuery = query(
           collection(db, 'public_profiles'),
-          where('xp', '>', profile.xp)
+          where('marketPower', '>', profile.marketPower || 0)
         );
         const rankSnapshot = await getCountFromServer(rankQuery);
         setUserRank(rankSnapshot.data().count + 1);
@@ -97,55 +232,14 @@ export function Dashboard() {
     };
     fetchRank();
 
-    // Market Intelligence Sync
-    const syncMarketIntelligence = async () => {
-      if (isGeneratingMarketRef.current) return;
-      
-      try {
-        const marketRef = doc(db, 'users', profile.uid, 'intelligence', 'market_trends');
-        const snap = await getDocs(query(collection(db, 'users', profile.uid, 'intelligence')));
-        const trendDoc = snap.docs.find(d => d.id === 'market_trends');
-        
-        const now = Date.now();
-        const twentyFourHours = 24 * 60 * 60 * 1000;
-        
-        if (trendDoc) {
-          const data = trendDoc.data();
-          const lastUpdated = data.updatedAt?.toMillis?.() || 0;
-          
-          if (now - lastUpdated < twentyFourHours) {
-            setMarketTrends(data.trends || []);
-            return;
-          }
-        }
-
-        // Refresh trends
-        isGeneratingMarketRef.current = true;
-        setLoadingMarket(true);
-        const newTrends = await generateMarketIntelligence(profile.specialization);
-        
-        const batch = writeBatch(db);
-        batch.set(marketRef, {
-          trends: newTrends,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-        await batch.commit();
-        
-        setMarketTrends(newTrends);
-      } catch (error) {
-        console.error("Market intelligence sync failed", error);
-      } finally {
-        isGeneratingMarketRef.current = false;
-        setLoadingMarket(false);
-      }
-    };
+    // Initial sync
     syncMarketIntelligence();
 
     return () => {
       unsubscribe();
       unsubscribeRoadmap();
     };
-  }, [profile?.xp]); // Re-fetch rank when XP changes
+  }, [profile?.uid, profile?.xp]); // Re-fetch rank when XP or user changes
 
   const generateNewQuests = async (force = false) => {
     if (!profile || isGeneratingRef.current || loadingQuests) return;
@@ -196,11 +290,16 @@ export function Dashboard() {
     }
   };
 
-  const handleCompleteQuest = async (questId: string, xp: number = 100, feedback: string = '', score: number = 0) => {
+  const handleCompleteQuest = async (questId: string, xp: number = 100, feedback: string = '', score: number = 0, marketDemand: number = 0.5) => {
     if (!profile) return;
     
     // Ensure xp is a valid number
     const rewardXp = typeof xp === 'number' ? xp : 100;
+    const demand = typeof marketDemand === 'number' ? marketDemand : 0.5;
+    
+    // Market Power Calculation: rewardXp * marketDemand * qualityScore
+    // This ensures high-demand skills and high-quality work result in better standing.
+    const marketPowerGain = Math.round(rewardXp * demand * (Math.max(score, 10) / 100));
 
     try {
       const batch = writeBatch(db);
@@ -212,21 +311,27 @@ export function Dashboard() {
         completed: true,
         feedback,
         score,
+        marketPowerGain,
         completedAt: serverTimestamp()
       }, { merge: true });
       
       const userUpdate: any = {
         xp: increment(rewardXp),
-        lastActive: new Date().toISOString()
+        marketPower: increment(marketPowerGain),
+        lastActive: new Date().toISOString(),
+        updatedAt: serverTimestamp()
       };
       if (shouldUpdateStreak) {
         userUpdate.streak = newStreak;
       }
 
+      // Using set with merge to ensure it works even if doc is somehow missing
       batch.set(doc(db, 'users', profile.uid), userUpdate, { merge: true });
 
       batch.set(doc(db, 'public_profiles', profile.uid), {
-        xp: increment(rewardXp)
+        xp: increment(rewardXp),
+        marketPower: increment(marketPowerGain),
+        updatedAt: serverTimestamp()
       }, { merge: true });
 
       await batch.commit();
@@ -235,6 +340,7 @@ export function Dashboard() {
       useStore.getState().setProfile({
         ...profile,
         xp: profile.xp + rewardXp,
+        marketPower: (profile.marketPower || 0) + marketPowerGain,
         streak: shouldUpdateStreak ? newStreak : profile.streak,
         lastActive: new Date().toISOString()
       });
@@ -277,7 +383,7 @@ export function Dashboard() {
       const analysis = await analyzeQuestSubmission(quest.title, fileContent, file.name, file.type);
       
       if (analysis.isComplete) {
-        await handleCompleteQuest(quest.id, quest.xp, analysis.feedback, analysis.score);
+        await handleCompleteQuest(quest.id, quest.xp, analysis.feedback, analysis.score, quest.marketDemand);
       } else {
         // Just update feedback if not complete
         await updateDoc(doc(db, 'users', profile.uid, 'daily_quests', quest.id), {
@@ -311,8 +417,8 @@ export function Dashboard() {
         const profileRef = doc(db, 'public_profiles', profile.uid);
         const userRef = doc(db, 'users', profile.uid);
         const batch = writeBatch(db);
-        batch.update(profileRef, { xp: 0, level: 1, specialization: 'Software + Cloud + AI' });
-        batch.update(userRef, { xp: 0, level: 1, specialization: 'Software + Cloud + AI' });
+        batch.update(profileRef, { xp: 0, marketPower: 0, level: 1, specialization: 'Software + Cloud + AI' });
+        batch.update(userRef, { xp: 0, marketPower: 0, level: 1, specialization: 'Software + Cloud + AI' });
         await batch.commit();
       }
 
@@ -402,6 +508,15 @@ export function Dashboard() {
   const xpToNextLevel = profile.level * 1000;
   const levelStartXP = (profile.level - 1) * 1000;
   const progress = Math.min(100, Math.max(0, ((profile.xp - levelStartXP) / 1000) * 100));
+
+  const GLOBAL_ENGINEER_COUNT = 27200000;
+  const calculateIndustryRank = (mp: number) => {
+    if (!mp || mp <= 0) return GLOBAL_ENGINEER_COUNT;
+    const k = 0.0004605;
+    return Math.max(1, Math.floor(GLOBAL_ENGINEER_COUNT * Math.exp(-k * mp)));
+  };
+
+  const industryRank = calculateIndustryRank(profile.marketPower || 0);
 
   const percentile = userRank && nexusTotal > 0 ? ((userRank / nexusTotal) * 100).toFixed(2) : "---";
 
@@ -525,9 +640,13 @@ export function Dashboard() {
               <div className="text-right">
                 <div className="flex items-center gap-1 text-emerald-500 font-bold text-[9px] uppercase tracking-widest">
                   <Trophy className="h-3 w-3" />
-                  Verified Standing
+                  Skill Verification Rank
                 </div>
                 <div className="text-xl font-black text-white">#{userRank || '---'}</div>
+                <div className="mt-2 pt-2 border-t border-zinc-800">
+                  <div className="text-[8px] text-zinc-500 font-mono uppercase tracking-widest mb-0.5">Projected Industry Rank</div>
+                  <div className="text-xs font-bold text-white/70 tracking-tight">#{industryRank.toLocaleString()}</div>
+                </div>
               </div>
             </div>
             <div className="space-y-2">
@@ -556,16 +675,34 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* Specialization Card */}
-        <Card className="bg-zinc-900 border-zinc-800 text-white">
+        {/* Mission Control Card */}
+        <Card className="bg-zinc-900 border-zinc-800 text-white relative overflow-hidden border-dashed">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-zinc-400 uppercase tracking-wider">Trajectory</CardTitle>
+            <CardTitle className="text-xs font-mono text-zinc-500 uppercase tracking-widest flex items-center justify-between">
+              Mission Control
+              <Zap className="h-3 w-3 text-yellow-500" />
+            </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold mb-2">{profile.specialization} Engineer</div>
-            <Badge variant="outline" className="border-zinc-700 text-zinc-400">
-              {profile.intensity.toUpperCase()} INTENSITY
-            </Badge>
+          <CardContent className="space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span className="text-[10px] font-mono text-zinc-400">AGENTS STANDBY</span>
+            </div>
+            <Button 
+              onClick={() => generateNewQuests(true)}
+              disabled={loadingQuests}
+              className="w-full bg-white text-black hover:bg-zinc-200 font-bold h-10 group"
+            >
+              {loadingQuests ? (
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="mr-2 h-4 w-4" />
+              )}
+              {loadingQuests ? "GENERATING..." : "REFRESH MISSIONS"}
+            </Button>
+            <p className="text-[8px] text-zinc-600 font-mono text-center">
+              Force-syncs AI missions with current progress.
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -670,25 +807,209 @@ export function Dashboard() {
         </motion.div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Daily Quests */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-bold flex items-center gap-2">
-              <Zap className="h-5 w-5 text-yellow-500" />
-              DAILY QUESTS
-            </h3>
-            <Button 
-              variant="ghost" 
-              size="sm" 
-              className="text-xs text-zinc-500 hover:text-white"
-              onClick={() => generateNewQuests(true)}
-              disabled={loadingQuests}
-            >
-              {loadingQuests ? "GENERATING..." : "REFRESH MISSIONS"}
-            </Button>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-8">
+        {/* Market Intelligence Analysis Chart */}
+        <Card className="lg:col-span-8 bg-zinc-900 border-zinc-800 text-white overflow-hidden">
+          <CardHeader className="border-b border-zinc-800 bg-zinc-900/40">
+            <div className="flex justify-between items-center">
+              <div>
+                <CardTitle className="text-xs font-mono text-emerald-500 uppercase tracking-widest flex items-center gap-2">
+                  <TrendingUp className="h-3 w-3" />
+                  Market Demand vs Mastery Radar
+                </CardTitle>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="h-6 w-6 text-zinc-500 hover:text-white"
+                  onClick={() => syncMarketIntelligence()}
+                  disabled={loadingMarket}
+                >
+                  <RefreshCw className={cn("h-3 w-3", loadingMarket && "animate-spin")} />
+                </Button>
+                <Badge variant="outline" className="border-emerald-500/20 text-emerald-500 text-[9px] font-mono">
+                  LIVE_FEED_ACTIVE
+                </Badge>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
+              <div className="md:col-span-7 h-[300px] w-full flex items-center justify-center relative bg-black/40 rounded-xl border border-white/5 shadow-inner">
+                {loadingMarket ? (
+                  <div className="flex flex-col items-center gap-4">
+                    <RefreshCw className="h-8 w-8 text-emerald-500 animate-spin" />
+                    <div className="text-center">
+                      <span className="text-[10px] font-mono text-white block uppercase tracking-[0.2em] mb-1">Nexus Intelligence Syncing...</span>
+                      <span className="text-[9px] font-mono text-zinc-500 uppercase tracking-widest">Parsing Industry Demand Data</span>
+                    </div>
+                  </div>
+                ) : (marketTrends && marketTrends.length >= 3) ? (
+                  <div className="w-full h-full relative">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RadarChart cx="50%" cy="50%" outerRadius="60%" data={marketTrends}>
+                        <PolarGrid stroke="#27272a" strokeDasharray="4 4" />
+                        <PolarAngleAxis 
+                          dataKey="skillName" 
+                          tick={{ fill: '#71717a', fontSize: 9, fontWeight: 700 }}
+                        />
+                        <PolarRadiusAxis 
+                          angle={30} 
+                          domain={[0, 100]} 
+                          tick={false} 
+                          axisLine={false} 
+                        />
+                        <Radar
+                          name="Industry Demand"
+                          dataKey="demandScore"
+                          stroke="#10b981"
+                          fill="#10b981"
+                          fillOpacity={0.6}
+                          animationDuration={1000}
+                        />
+                        <Radar
+                          name="Nexus Benchmark"
+                          dataKey="benchScore"
+                          stroke="#3b82f6"
+                          fill="#3b82f6"
+                          fillOpacity={0.2}
+                          animationDuration={1500}
+                        />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#09090b', border: '1px solid #27272a', borderRadius: '8px', fontSize: '10px' }}
+                          itemStyle={{ color: '#fff' }}
+                        />
+                      </RadarChart>
+                    </ResponsiveContainer>
+                    <div className="absolute top-2 right-2 flex gap-1">
+                      <Badge variant="outline" className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[8px] font-mono">DEMAND</Badge>
+                      <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/20 text-[8px] font-mono">BENCH</Badge>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center gap-4 text-center p-8 bg-zinc-900/50 rounded-xl">
+                    <AlertCircle className="h-10 w-10 text-emerald-500/50" />
+                    <div className="space-y-4">
+                      <div className="space-y-1">
+                        <p className="text-xs font-bold text-white uppercase tracking-tight">Intelligence Engine Idle</p>
+                        <p className="text-[10px] text-zinc-500 font-mono leading-tight">
+                          Connect to the Global Intelligence Feed to fetch market metrics for <span className="text-white">{profile.specialization}</span>.
+                        </p>
+                      </div>
+                      <Button 
+                        onClick={() => syncMarketIntelligence()} 
+                        className="bg-emerald-500 text-black hover:bg-emerald-400 font-black uppercase text-xs tracking-widest px-8 shadow-[0_0_15px_rgba(16,185,129,0.2)]"
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        RETRY_SYNC_INIT
+                      </Button>
+                      <p className="text-[9px] text-zinc-600 font-mono italic">
+                        Real-time data requires an active Gemini link.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="md:col-span-5 space-y-4">
+                <p className="text-[10px] text-zinc-500 font-mono leading-relaxed uppercase tracking-tighter">
+                  Real-time analysis of <span className="text-white font-bold">{profile.specialization}</span> demand metrics vs industry standard entry benchmarks.
+                </p>
+                <div className="pt-4 border-t border-zinc-800 space-y-3">
+                  {marketTrends && marketTrends.length > 0 ? (
+                    marketTrends.slice(0, 3).map((trend, i) => (
+                      <div key={i}>
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="text-[10px] font-bold text-zinc-400 uppercase">{trend.skillName}</span>
+                          <span className="text-[10px] font-mono text-emerald-500">{trend.demandScore}%</span>
+                        </div>
+                        <Progress value={trend.demandScore} className="h-1 bg-zinc-800" />
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-[10px] text-zinc-600 italic">Feed offline. Initialize sync to stream demand metrics.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Operational Intelligence Card */}
+        <Card className="lg:col-span-4 bg-zinc-900 border-zinc-800 text-white overflow-hidden flex flex-col">
+          <CardHeader className="pb-2 border-b border-zinc-800/50">
+            <div className="flex justify-between items-center">
+              <CardTitle className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">Operational Intelligence</CardTitle>
+              <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            </div>
+          </CardHeader>
+          <CardContent className="flex-1 space-y-4 p-4">
+            <div className="pt-2 space-y-3">
+              <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono text-zinc-500">GLOBAL_POSITION</span>
+                  <span className="text-[10px] font-mono text-white font-bold">TOP {percentile}%</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[9px] font-mono text-zinc-600">RANK_ID</span>
+                  <span className="text-[9px] font-mono text-zinc-400">#{industryRank.toLocaleString()} GLOBAL</span>
+                </div>
+              </div>
+
+              <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-mono text-zinc-500">TRAJECTORY_SYNC</span>
+                  <span className="text-[10px] font-mono text-blue-400 font-bold uppercase">Active</span>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[8px] font-mono text-zinc-600 uppercase">
+                    <span>Sync Progress</span>
+                    <span>{progress.toFixed(1)}%</span>
+                  </div>
+                  <Progress value={progress} className="h-1 bg-zinc-800" />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between p-3 rounded-lg bg-black/40 border border-white/5">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-mono text-zinc-500 block">ENGINE_EFFICIENCY</span>
+                  <div className="flex items-center gap-2">
+                    <Flame className="h-3 w-3 text-orange-500" />
+                    <span className="text-[12px] font-mono text-white font-black">{profile.streak}X MULTIPLIER</span>
+                  </div>
+                </div>
+                <Badge className="bg-emerald-500/10 text-emerald-500 border-0 text-[9px] font-mono">OPTI_MODE</Badge>
+              </div>
+            </div>
+            
+            <div className="mt-4 p-3 rounded bg-zinc-800/20 border border-zinc-800/50">
+              <p className="text-[9px] text-zinc-500 font-mono italic leading-relaxed">
+                <span className="text-zinc-300 font-bold">LOG_ENTRY:</span> Nexus AI has detected a <span className="text-emerald-500">{(profile.streak > 0 ? (profile.streak * 5) : 0)}% efficiency boost</span> in your learning trajectory due to consecutive active cycles.
+              </p>
+            </div>
+          </CardContent>
+          <div className="p-4 bg-emerald-500/5 mt-auto border-t border-emerald-500/10">
+             <Button 
+               variant="ghost" 
+               className="w-full text-[10px] font-mono text-emerald-500/70 hover:text-emerald-400 h-8 group"
+               onClick={handleAnalyzeMarket}
+             >
+               FETCH ANALYTICS_REPORT_V5 <ArrowRight className="ml-1 h-3 w-3 transition-transform group-hover:translate-x-1" />
+             </Button>
           </div>
-          <p className="text-[10px] text-zinc-600 mb-2 italic">Getting stuck? Refresh to generate new missions based on your latest focus.</p>
+        </Card>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-7 gap-8">
+        {/* Daily Missions */}
+        <section className="lg:col-span-4">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold flex items-center gap-2 uppercase tracking-tighter">
+              <Zap className="h-5 w-5 text-yellow-500" />
+              Daily Active Missions
+            </h3>
+          </div>
+          <p className="text-[10px] text-zinc-600 mb-2 italic">Getting stuck? Use Mission Control above to refresh your focus.</p>
           <div className="space-y-3">
             {loadingQuests ? (
               [1, 2, 3].map(i => (
@@ -703,63 +1024,88 @@ export function Dashboard() {
               />
             )) : (
               <div className="text-center py-10 border border-dashed border-zinc-800 rounded-xl">
-                <p className="text-zinc-500 text-sm">No quests active. Initializing...</p>
+                <p className="text-zinc-500 text-sm">No missions active. Use Mission Control to initialize.</p>
               </div>
             )}
           </div>
         </section>
 
-        {/* Market Intelligence */}
-        <section>
-          <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
-            <TrendingUp className="h-5 w-5 text-emerald-500" />
-            MARKET INTELLIGENCE
-          </h3>
-          <Card className="bg-zinc-900 border-zinc-800 text-white">
-            <CardContent className="p-6">
-              <div className="space-y-4">
-                {loadingMarket ? (
+        {/* Strategic Mentor */}
+        <section className="lg:col-span-3">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-xl font-bold flex items-center gap-2 uppercase tracking-tighter">
+              <Target className="h-5 w-5 text-emerald-500" />
+              Strategic Mentor
+            </h3>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-6 w-6 text-zinc-500 hover:text-emerald-500"
+              onClick={syncStrategicAdvisory}
+              disabled={loadingAdvisory}
+            >
+              <RefreshCw className={cn("h-3 w-3", loadingAdvisory && "animate-spin")} />
+            </Button>
+          </div>
+          <Card className="bg-zinc-900 border-zinc-800 text-white min-h-[400px] flex flex-col shadow-2xl">
+            <CardHeader className="border-b border-zinc-800 bg-zinc-900/50">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                <CardTitle className="text-xs font-mono uppercase tracking-[0.2em] text-zinc-400">Personalized Nexus Strategy</CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent className="flex-1 p-0 flex flex-col">
+              <ScrollArea className="flex-1 p-4 h-[350px]">
+                {loadingAdvisory && !advisory ? (
+                  <div className="flex flex-col items-center justify-center h-full gap-4 py-20">
+                    <div className="flex gap-1">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                    </div>
+                    <span className="text-[10px] font-mono text-zinc-600 uppercase tracking-widest">Generating Strategy...</span>
+                  </div>
+                ) : (
                   <div className="space-y-4">
-                    <div className="flex gap-4 animate-pulse">
-                      <div className="h-10 w-10 rounded bg-zinc-800 shrink-0" />
-                      <div className="space-y-2 flex-1">
-                        <div className="h-4 bg-zinc-800 rounded w-1/2" />
-                        <div className="h-3 bg-zinc-800 rounded w-full" />
+                    <div className="p-3 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Zap className="h-3 w-3 text-emerald-500" />
+                        <p className="text-[10px] font-mono text-emerald-500 uppercase tracking-widest font-bold">// SYSTEM_DIRECTIVE</p>
                       </div>
+                      <p className="text-xs text-zinc-300 leading-relaxed font-medium">
+                        "{advisory?.directive || `Focus on completing the remaining chapters in ${currentChapter?.title || 'Foundations'} to unlock high-impact project opportunities.`}"
+                      </p>
+                    </div>
+                    
+                    <div className="p-3 rounded-lg bg-zinc-800/30 border border-zinc-800/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Target className="h-3 w-3 text-zinc-500" />
+                        <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest font-bold">// GROWTH_ADVISORY</p>
+                      </div>
+                      <p className="text-xs text-zinc-400 leading-relaxed italic">
+                        {advisory?.advisory || `Market pulse suggests a 20% spike in demand for engineers with verified projects in your track. Your current trajectory is optimal.`}
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-blue-500/5 border border-blue-500/10 opacity-60">
+                      <p className="text-[10px] font-mono text-blue-500 uppercase tracking-widest mb-2 font-bold">// TECH_OVERSIGHT</p>
+                      <p className="text-xs text-zinc-500 leading-relaxed">
+                        LLM validation systems are currently monitoring your mission deliverable quality. Maintain 85%+ score for priority networking unlocks.
+                      </p>
                     </div>
                   </div>
-                ) : marketTrends.length > 0 ? (
-                  marketTrends.map((trend, i) => (
-                    <div key={i} className="flex gap-4">
-                      <div className={cn(
-                        "h-10 w-10 rounded flex items-center justify-center shrink-0",
-                        trend.icon === 'trending' ? "bg-emerald-500/10 text-emerald-500" :
-                        trend.icon === 'target' ? "bg-blue-500/10 text-blue-500" :
-                        trend.icon === 'zap' ? "bg-yellow-500/10 text-yellow-500" :
-                        "bg-purple-500/10 text-purple-500"
-                      )}>
-                        {trend.icon === 'trending' ? <TrendingUp className="h-5 w-5" /> :
-                         trend.icon === 'target' ? <Target className="h-5 w-5" /> :
-                         trend.icon === 'zap' ? <Zap className="h-5 w-5" /> :
-                         trend.icon === 'cpu' ? <Zap className="h-5 w-5" /> : // Fallback
-                         <Globe className="h-5 w-5" />}
-                      </div>
-                      <div>
-                        <p className="text-sm font-bold uppercase tracking-tight">{trend.title}</p>
-                        <p className="text-xs text-zinc-500 leading-relaxed">{trend.description}</p>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-zinc-500 italic">No market trends available at this time.</p>
                 )}
-                
+              </ScrollArea>
+              <div className="p-4 border-t border-zinc-800 mt-auto bg-black/20">
                 <Button 
-                  onClick={handleAnalyzeMarket}
-                  className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-6 rounded-xl mt-4"
+                  onClick={() => {
+                    setMentorPrompt("Give me a strategic overview of my current progress and what specific skill I should double down on next to maximize market power.");
+                    setActiveTab('mentor');
+                  }}
+                  className="w-full bg-emerald-500 text-black hover:bg-emerald-400 font-black text-[10px] uppercase tracking-[0.2em] h-10 shadow-[0_0_20px_rgba(16,185,129,0.1)]"
                 >
-                  <Sparkles className="mr-2 h-5 w-5" />
-                  ANALYZE MARKET & UPDATE ROADMAP
+                  <MessageSquare className="mr-2 h-4 w-4" />
+                  Open Tactical Comms
                 </Button>
               </div>
             </CardContent>

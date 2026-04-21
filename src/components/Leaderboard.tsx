@@ -13,6 +13,16 @@ import { cn } from '../lib/utils';
 // Total Engineers: ~27.2 Million (IDC/SlashData 2024)
 const GLOBAL_ENGINEER_COUNT = 27200000;
 
+// Stable Industry Rank Projection based on absolute Market Power (MP)
+// Formula: GlobalRank = TotalEngineers * exp(-k * MP)
+// K is calibrated such that 15,000 MP = Top 0.1% (Rank ~27,200)
+const calculateIndustryRank = (mp: number) => {
+  if (!mp || mp <= 0) return GLOBAL_ENGINEER_COUNT;
+  const k = 0.0004605; // -ln(0.001) / 15000
+  const projectedRank = Math.floor(GLOBAL_ENGINEER_COUNT * Math.exp(-k * mp));
+  return Math.max(1, projectedRank);
+};
+
 export function Leaderboard() {
   const { profile } = useStore();
   const [rankings, setRankings] = useState<any[]>([]);
@@ -25,7 +35,7 @@ export function Leaderboard() {
 
     const q = query(
       collection(db, 'public_profiles'),
-      orderBy('xp', 'desc'),
+      orderBy('marketPower', 'desc'),
       limit(10)
     );
 
@@ -48,7 +58,7 @@ export function Leaderboard() {
 
         const rankQuery = query(
           collection(db, 'public_profiles'),
-          where('xp', '>', profile.xp)
+          where('marketPower', '>', profile.marketPower || 0)
         );
         const rankSnapshot = await getCountFromServer(rankQuery);
         const rank = rankSnapshot.data().count + 1;
@@ -64,9 +74,12 @@ export function Leaderboard() {
 
     calculateNexusRank();
     return () => unsubscribe();
-  }, [profile?.xp, profile?.uid]);
+  }, [profile?.marketPower, profile?.uid]);
 
   const [calculatedPercentile, setCalculatedPercentile] = useState("---");
+
+  const industryRank = profile?.marketPower ? calculateIndustryRank(profile.marketPower) : GLOBAL_ENGINEER_COUNT;
+  const industryPercentile = (industryRank / GLOBAL_ENGINEER_COUNT) * 100;
 
   const getTier = (percentile: string) => {
     const p = parseFloat(percentile);
@@ -133,10 +146,8 @@ export function Leaderboard() {
                 </div>
                 <div>
                   <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1">Projected Industry Rank</p>
-                  <p className="text-3xl font-black tracking-tight">
-                    #{nexusRank && calculatedPercentile !== "---" 
-                      ? Math.floor((parseFloat(calculatedPercentile) / 100) * GLOBAL_ENGINEER_COUNT).toLocaleString() 
-                      : "---"}
+                  <p className="text-3xl font-black tracking-tight text-white/90">
+                    #{industryRank.toLocaleString()}
                   </p>
                 </div>
               </div>
@@ -152,10 +163,10 @@ export function Leaderboard() {
           <section className="p-8 rounded-[2rem] border border-zinc-800 bg-black/50">
             <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-6">Industry Comparison</h3>
             <div className="space-y-4">
-              <BenchmarkItem label="FAANG / Staff Level" percentile="0.1" current={parseFloat(calculatedPercentile)} />
-              <BenchmarkItem label="Senior Engineer (L5)" percentile="2.0" current={parseFloat(calculatedPercentile)} />
-              <BenchmarkItem label="Mid-Level Engineer" percentile="15.0" current={parseFloat(calculatedPercentile)} />
-              <BenchmarkItem label="Junior / Entry Level" percentile="45.0" current={parseFloat(calculatedPercentile)} />
+              <BenchmarkItem label="FAANG / Staff Level" percentile="0.1" current={industryPercentile} />
+              <BenchmarkItem label="Senior Engineer (L5)" percentile="2.0" current={industryPercentile} />
+              <BenchmarkItem label="Mid-Level Engineer" percentile="15.0" current={industryPercentile} />
+              <BenchmarkItem label="Junior / Entry Level" percentile="45.0" current={industryPercentile} />
             </div>
           </section>
         </div>
@@ -207,8 +218,8 @@ export function Leaderboard() {
                       </div>
 
                       <div className="text-right">
-                        <div className="text-sm font-black tabular-nums">{rank.xp.toLocaleString()}</div>
-                        <div className="text-[8px] text-zinc-600 font-mono uppercase tracking-widest">XP_UNITS</div>
+                        <div className="text-sm font-black tabular-nums">{(rank.marketPower || 0).toLocaleString()}</div>
+                        <div className="text-[8px] text-zinc-600 font-mono uppercase tracking-widest text-emerald-500/50">MP_UNITS</div>
                       </div>
                     </CardContent>
                   </Card>
@@ -234,8 +245,8 @@ export function Leaderboard() {
                         <p className="text-[10px] text-zinc-500 font-mono uppercase tracking-wider">{profile?.specialization} // LVL {profile?.level}</p>
                       </div>
                       <div className="text-right">
-                        <div className="text-sm font-black tabular-nums">{profile?.xp.toLocaleString()}</div>
-                        <div className="text-[8px] text-zinc-600 font-mono uppercase tracking-widest">XP_UNITS</div>
+                        <div className="text-sm font-black tabular-nums">{(profile?.marketPower || 0).toLocaleString()}</div>
+                        <div className="text-[8px] text-zinc-600 font-mono uppercase tracking-widest text-emerald-500/50">MP_UNITS</div>
                       </div>
                     </CardContent>
                   </Card>

@@ -206,6 +206,7 @@ export const generateInitialRoadmap = async (specialization: string, intensity: 
     10. AVOID: Crash courses, "X in 10 minutes" videos, or low-depth tutorials.
     11. VERIFY: Ensure all URLs are valid and lead to comprehensive, engineering-grade content.
     12. LECTURE QUALITY: Each lecture title must be technically specific (e.g., "Memory Management in C" instead of "Coding Basics").
+    13. MARKET DEMAND: Assign a 'marketDemand' score (0.1 to 1.0) based on current industry needs. For example, AWS/Cloud/System Design should be 0.9-1.0, while basic absolute fundamentals like variable declaration might be 0.4 (foundational but less "demand" than architectural skills).
   `;
 
   try {
@@ -226,6 +227,10 @@ export const generateInitialRoadmap = async (specialization: string, intensity: 
               order: { type: Type.NUMBER, description: "The sequential step number for this skill" },
               dependencies: { type: Type.ARRAY, items: { type: Type.STRING } },
               xpReward: { type: Type.NUMBER },
+              marketDemand: { 
+                type: Type.NUMBER, 
+                description: "A scale from 0.1 to 1.0 representing how critical this skill is in the current global market." 
+              },
               lectures: {
                 type: Type.ARRAY,
                 items: {
@@ -318,13 +323,18 @@ export const generateMarketIntelligence = async (specialization: string) => {
     Analyze current market trends for the specialization: "${specialization}".
     
     TASK:
-    Identify 2 highly trending, relevant, and critical skills or industry shifts that are happening RIGHT NOW (current month/year).
+    Identify 5 critical, high-demand skills for this path.
+    For each skill, provide:
+    1. skillName: Common industry name.
+    2. demandScore (0-100): Current high-growth demand index.
+    3. benchScore (0-100): The score a standard entry-to-mid level engineer usually has.
     
     RETURN:
-    A JSON array of 2 objects, each with:
-    - title: string (short, bold title like "RUST ADOPTION SURGE")
-    - description: string (1 sentence explaining the trend and recommending a skill)
-    - icon: string (one of: "trending", "target", "zap", "globe", "cpu")
+    A JSON array of 5 objects, each with:
+    - skillName: string
+    - demandScore: number
+    - benchScore: number
+    - description: string (1 short sentence)
   `;
 
   try {
@@ -338,11 +348,12 @@ export const generateMarketIntelligence = async (specialization: string) => {
           items: {
             type: Type.OBJECT,
             properties: {
-              title: { type: Type.STRING },
-              description: { type: Type.STRING },
-              icon: { type: Type.STRING }
+              skillName: { type: Type.STRING },
+              demandScore: { type: Type.NUMBER },
+              benchScore: { type: Type.NUMBER },
+              description: { type: Type.STRING }
             },
-            required: ["title", "description", "icon"]
+            required: ["skillName", "demandScore", "benchScore", "description"]
           }
         }
       }
@@ -352,8 +363,11 @@ export const generateMarketIntelligence = async (specialization: string) => {
   } catch (error) {
     console.error("Gemini API Error (generateMarketIntelligence):", error);
     return [
-      { title: "RUST ADOPTION SURGE", description: "Big Tech is shifting core services to Rust for memory safety.", icon: "trending" },
-      { title: "LLM AGENT DEMAND", description: "Companies are seeking engineers who can build autonomous AI agents.", icon: "target" }
+      { skillName: "System Architecture", demandScore: 95, benchScore: 40, description: "Highly critical for scaling distributed services." },
+      { skillName: "Memory Safety (Rust)", demandScore: 88, benchScore: 15, description: "Rapidly replacing C++ in performance-critical pods." },
+      { skillName: "AI/LLM Integration", demandScore: 98, benchScore: 25, description: "Unprecedented demand for LLM-native application logic." },
+      { skillName: "Cloud Infrastructure", demandScore: 85, benchScore: 50, description: "Standard requirement for all modern deployment cycles." },
+      { skillName: "Security Engineering", demandScore: 92, benchScore: 30, description: "Increasingly vital as automated threats evolve." }
     ];
   }
 };
@@ -548,6 +562,7 @@ export const generateDailyQuests = async (specialization: string, availableNodes
     - title: string (short, punchy)
     - description: string (Must follow this structure: "OBJECTIVE: [Goal]. TASK: [Step-by-step what to build]. DELIVERABLE: [What file/screenshot to upload].")
     - xp: number
+    - marketDemand: number (0.1 to 1.0 based on current industry relevance of the specific skill in this mission. High-demand tech like K8s, Rust, DistSys should be 0.9+, basics should be 0.4-0.6).
     - type: "technical" | "meta"
   `;
 
@@ -565,9 +580,10 @@ export const generateDailyQuests = async (specialization: string, availableNodes
               title: { type: Type.STRING },
               description: { type: Type.STRING },
               xp: { type: Type.NUMBER },
+              marketDemand: { type: Type.NUMBER, description: "Relevance of this quest's specific skill in the current market (0.1 to 1.0)" },
               type: { type: Type.STRING, enum: ["technical", "meta"] }
             },
-            required: ["title", "description", "xp", "type"]
+            required: ["title", "description", "xp", "type", "marketDemand"]
           }
         }
       }

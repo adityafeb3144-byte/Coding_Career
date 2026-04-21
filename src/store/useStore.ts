@@ -8,6 +8,7 @@ interface UserProfile {
   photoURL: string | null;
   level: number;
   xp: number;
+  marketPower: number;
   streak: number;
   specialization: string;
   intensity: string;
