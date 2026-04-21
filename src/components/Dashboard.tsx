@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'motion/react';
-import { Zap, Target, Award, TrendingUp, Clock, Flame, Sparkles, MessageSquare, CheckCircle2, Trophy, Globe, RefreshCw, FileUp, FileCheck, AlertCircle } from 'lucide-react';
+import { Zap, Target, Award, TrendingUp, Clock, Flame, Sparkles, MessageSquare, CheckCircle2, Trophy, Globe, RefreshCw, FileUp, FileCheck, AlertCircle, Info, ChevronDown, ChevronUp } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { generateDailyQuests, generateInitialRoadmap, analyzeQuestSubmission, generateMarketIntelligence } from '../lib/gemini';
 
@@ -254,14 +254,22 @@ export function Dashboard() {
 
       // Read file content
       const reader = new FileReader();
+      const isImage = file.type.startsWith('image/');
+      const isScratch = file.name.toLowerCase().endsWith('.sb3');
+      
       const fileContent = await new Promise<string>((resolve, reject) => {
         reader.onload = (e) => resolve(e.target?.result as string);
         reader.onerror = () => reject(new Error("Failed to read file. It might be too large or corrupted."));
-        reader.readAsText(file);
+        
+        if (isImage || isScratch) {
+          reader.readAsDataURL(file);
+        } else {
+          reader.readAsText(file);
+        }
       });
 
       // Analyze with AI
-      const analysis = await analyzeQuestSubmission(quest.title, fileContent, file.name);
+      const analysis = await analyzeQuestSubmission(quest.title, fileContent, file.name, file.type);
       
       if (analysis.isComplete) {
         await handleCompleteQuest(quest.id, quest.xp, analysis.feedback, analysis.score);
@@ -674,24 +682,14 @@ export function Dashboard() {
             <Button 
               variant="ghost" 
               size="sm" 
-              className={cn(
-                "text-xs text-zinc-500 hover:text-white",
-                quests.some(q => !q.completed) && quests.length > 0 && "opacity-50 cursor-not-allowed"
-              )}
-              onClick={() => generateNewQuests()}
-              disabled={loadingQuests || (quests.some(q => !q.completed) && quests.length > 0)}
+              className="text-xs text-zinc-500 hover:text-white"
+              onClick={() => generateNewQuests(true)}
+              disabled={loadingQuests}
             >
-              {loadingQuests ? "GENERATING..." : "REFRESH"}
+              {loadingQuests ? "GENERATING..." : "REFRESH MISSIONS"}
             </Button>
           </div>
-          {quests.length > 0 && quests.every(q => q.completed) ? (
-            <p className="text-[10px] text-emerald-500 mb-2 font-bold flex items-center gap-1">
-              <CheckCircle2 className="h-3 w-3" />
-              ALL MISSIONS COMPLETE. REFRESH UNLOCKED.
-            </p>
-          ) : quests.some(q => !q.completed) && quests.length > 0 && (
-            <p className="text-[10px] text-zinc-600 mb-2 italic">Complete all missions to unlock refresh.</p>
-          )}
+          <p className="text-[10px] text-zinc-600 mb-2 italic">Getting stuck? Refresh to generate new missions based on your latest focus.</p>
           <div className="space-y-3">
             {loadingQuests ? (
               [1, 2, 3].map(i => (
@@ -774,39 +772,52 @@ export function Dashboard() {
 }
 
 function QuestItem({ quest, isAnalyzing, onFileSubmit }: { quest: any, isAnalyzing: boolean, onFileSubmit: (file: File) => void }) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const icon = quest.type === 'technical' ? <Target className="h-4 w-4" /> : <MessageSquare className="h-4 w-4" />;
 
   return (
     <div className={cn(
-      "flex flex-col p-4 rounded-xl border transition-all gap-4",
+      "p-4 rounded-xl border transition-all flex flex-col gap-4",
       quest.completed 
         ? "bg-zinc-900/30 border-zinc-800/50" 
         : "bg-zinc-900 border-zinc-800 hover:border-zinc-700"
     )}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-1">
           <div className={cn(
             "h-8 w-8 rounded-lg flex items-center justify-center",
             quest.completed ? "bg-zinc-800 text-emerald-500" : "bg-zinc-800 text-zinc-400"
           )}>
             {quest.completed ? <CheckCircle2 className="h-4 w-4" /> : icon}
           </div>
-          <div>
-            <p className={cn("text-sm font-bold", quest.completed && "text-zinc-500")}>{quest.title}</p>
-            <p className="text-xs text-zinc-500">+{quest.xp} XP</p>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <p className={cn("text-sm font-bold leading-none", quest.completed && "text-zinc-500")}>{quest.title}</p>
+              <button 
+                onClick={() => setIsExpanded(!isExpanded)}
+                className={cn(
+                  "p-1 rounded hover:bg-zinc-800 transition-colors",
+                  isExpanded ? "text-emerald-500" : "text-zinc-500 hover:text-white"
+                )}
+                title="Toggle Mission Details"
+              >
+                {isExpanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <p className="text-[10px] text-zinc-500 font-mono mt-1">+{quest.xp} XP REWARD</p>
           </div>
         </div>
         <div className="flex items-center gap-3">
           {quest.completed ? (
-            <Badge className="bg-emerald-500/20 text-emerald-500 border-0">VERIFIED</Badge>
+            <Badge className="bg-emerald-500/20 text-emerald-500 border-0 text-[10px] py-0 px-2 h-5">VERIFIED</Badge>
           ) : (
             <>
               <input 
                 type="file" 
                 className="hidden" 
                 ref={fileInputRef}
-                accept=".txt,.js,.ts,.tsx,.py,.java,.cpp,.c,.h,.css,.html,.md,.json,.sh,.sql,.yaml,.yml"
+                accept=".txt,.js,.ts,.tsx,.py,.java,.cpp,.c,.h,.css,.html,.md,.json,.sh,.sql,.yaml,.yml,image/png,image/jpeg,image/webp,.sb3"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) onFileSubmit(file);
@@ -815,21 +826,44 @@ function QuestItem({ quest, isAnalyzing, onFileSubmit }: { quest: any, isAnalyzi
               <Button 
                 size="sm" 
                 variant="outline" 
-                className="border-zinc-700 h-8 text-xs hover:bg-white hover:text-black gap-2"
+                className={cn(
+                  "h-7 text-[10px] font-bold px-3 gap-2 transition-all uppercase tracking-tighter",
+                  quest.feedback && !quest.completed ? "border-yellow-500/50 text-yellow-500 hover:bg-yellow-500 hover:text-black" : "border-zinc-700 hover:bg-white hover:text-black"
+                )}
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isAnalyzing}
               >
                 {isAnalyzing ? (
                   <RefreshCw className="h-3 w-3 animate-spin" />
+                ) : quest.feedback && !quest.completed ? (
+                  <RefreshCw className="h-3 w-3" />
                 ) : (
                   <FileUp className="h-3 w-3" />
                 )}
-                {isAnalyzing ? "ANALYZING..." : "ATTACH SOLUTION"}
+                {isAnalyzing ? "ANALYZING..." : quest.feedback && !quest.completed ? "RETRY" : "SUBMIT"}
               </Button>
             </>
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden"
+          >
+            <div className="pl-12 pb-2">
+              <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1">Mission Intelligence:</p>
+              <p className="text-xs text-emerald-500/80 font-mono leading-relaxed">
+                {quest.description || "OBJECTIVE: Complete the mission based on the title. TASK: Review current chapter lectures and apply logic. DELIVERABLE: Upload your source file or screenshot."}
+              </p>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Feedback Column */}
       {(quest.feedback || isAnalyzing) && (
@@ -848,13 +882,21 @@ function QuestItem({ quest, isAnalyzing, onFileSubmit }: { quest: any, isAnalyzi
               <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1">
                 {isAnalyzing ? "AI Analysis in Progress..." : "Mentor Feedback & Improvement Pointers"}
               </p>
+              {!isAnalyzing && !quest.completed && quest.feedback && (
+                <p className="text-[9px] text-yellow-500/80 mb-2 font-mono uppercase tracking-tight">
+                  Threshold Gap Indicated. Logic score below 60% requires refinement.
+                </p>
+              )}
               {isAnalyzing ? (
                 <div className="space-y-2">
                   <div className="h-2 w-full bg-zinc-800 rounded animate-pulse" />
                   <div className="h-2 w-2/3 bg-zinc-800 rounded animate-pulse" />
                 </div>
               ) : (
-                <div className="text-xs text-zinc-400 leading-relaxed whitespace-pre-line">
+                <div className={cn(
+                  "text-xs leading-relaxed whitespace-pre-line",
+                  quest.feedback?.startsWith('REJECTED') ? "text-yellow-400 font-medium" : "text-zinc-400"
+                )}>
                   {quest.feedback || "Submit your solution file for AI verification and feedback."}
                   {quest.score > 0 && (
                     <div className="mt-2 flex items-center gap-2">

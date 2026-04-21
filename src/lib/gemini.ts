@@ -544,7 +544,11 @@ export const generateDailyQuests = async (specialization: string, availableNodes
     - If the user is at the start of their journey (0 XP), keep tasks simple and foundational.
     - Reference specific lecture titles from the provided context in the quest descriptions.
     
-    Return a JSON array of 3 objects.
+    Return a JSON array of 3 objects with:
+    - title: string (short, punchy)
+    - description: string (Must follow this structure: "OBJECTIVE: [Goal]. TASK: [Step-by-step what to build]. DELIVERABLE: [What file/screenshot to upload].")
+    - xp: number
+    - type: "technical" | "meta"
   `;
 
   try {
@@ -559,10 +563,11 @@ export const generateDailyQuests = async (specialization: string, availableNodes
             type: Type.OBJECT,
             properties: {
               title: { type: Type.STRING },
+              description: { type: Type.STRING },
               xp: { type: Type.NUMBER },
               type: { type: Type.STRING, enum: ["technical", "meta"] }
             },
-            required: ["title", "xp", "type"]
+            required: ["title", "description", "xp", "type"]
           }
         }
       }
@@ -575,62 +580,121 @@ export const generateDailyQuests = async (specialization: string, availableNodes
   }
 };
 
-export const analyzeQuestSubmission = async (questTitle: string, fileContent: string, fileName: string) => {
+export const analyzeQuestSubmission = async (questTitle: string, fileContent: string, fileName: string, mimeType?: string) => {
   const model = "gemini-3.1-pro-preview";
   
-  // Basic validation: Is it really text?
-  // Check for excessive null bytes or control characters that suggest binary
-  const binaryCheck = /[\x00-\x08\x0E-\x1F]/.test(fileContent.substring(0, 500));
-  if (binaryCheck) {
-    return {
-      isComplete: false,
-      feedback: "The AI Mentor detected binary or non-text data. Please upload a readable text-based source file (e.g., .txt, .js, .py, .md).",
-      score: 0
-    };
-  }
-
-  // Pre-process: Strip excessive whitespace and limit size
-  const cleanedContent = fileContent.trim();
-  if (!cleanedContent) {
-    return {
-      isComplete: false,
-      feedback: "The submitted file appears to be empty. Please provide your solution content.",
-      score: 0
-    };
-  }
-
-  // Truncate file content to prevent token overflow (approx 500k characters is ~125k tokens)
-  const truncationLimit = 500000;
-  const truncatedContent = cleanedContent.length > truncationLimit 
-    ? cleanedContent.substring(0, truncationLimit) + "\n... (content truncated: file exceeds 500k chars. Focusing on top half of the file.)"
-    : cleanedContent;
-
-  const prompt = `
-    You are an Elite Engineering Mentor and Code Reviewer. 
-    The user has submitted a file for their daily quest: "${questTitle}".
-    
-    SUBMISSION CONTEXT:
-    - FILE NAME: ${fileName}
-    - CONTENT PREVIEW:
-    ${truncatedContent}
-    
-    ACTION PROTOCOL:
-    1. VALIDATION: Does this content reasonably demonstrate the work described in "${questTitle}"?
-    2. TECHNICAL REVIEW: Identify specific strengths and areas for improvement.
-    3. SCORING: Award a score from 0-100 based on effort, correctness, and best practices.
-    
-    RESPONSE FORMAT (STRICT JSON):
-    {
-      "isComplete": boolean,
-      "feedback": "A concise summary with 2-3 specific technical pointers.",
-      "score": number
+  const isImage = mimeType?.startsWith('image/');
+  const isScratch = fileName.toLowerCase().endsWith('.sb3');
+  
+  // If it's not an image or a scratch file, perform binary check
+  if (!isImage && !isScratch) {
+    // Only flag as binary if we find multiple null bytes or specific non-text codes
+    const binaryChars = (fileContent.substring(0, 1000).match(/[\x00-\x08\x0E\x0F\x10-\x1F]/g) || []);
+    if (binaryChars.length > 5) {
+      return {
+        isComplete: false,
+        feedback: "The AI Mentor detected binary data. If you are uploading a Scratch project (.sb3) or screenshot, please ensure the format is correct. For best results with Scratch, upload a screenshot of your blocks.",
+        score: 0
+      };
     }
-  `;
+  }
+
+  let promptParts: any[] = [];
+  
+  if (isScratch) {
+    promptParts.push({
+      text: `
+        You are an Elite Engineering Mentor specializing in Scratch and Block-based programming.
+        The user has submitted a Scratch Project File (.sb3) for their daily quest: "${questTitle}".
+        
+        CONTEXT:
+        - FILE NAME: ${fileName}
+        - NOTE: The file is binary (zip archive).
+        
+        TASK:
+        1. VALIDATION: Mark as complete since the project file has been successfully submitted.
+        2. FEEDBACK: Start with 'ACCEPTED: '. Congratulate the user on producing their Scratch project! Advise them that for a detailed code logic review, they should upload a SCREENSHOT of their blocks in the future.
+        3. SCORING: Award a high score (90+) for successful project delivery.
+      `
+    });
+  } else if (isImage) {
+    promptParts.push({
+      inlineData: {
+        data: fileContent.includes(',') ? fileContent.split(',')[1] : fileContent,
+        mimeType: mimeType
+      }
+    });
+    promptParts.push({
+      text: `
+        You are an Elite Engineering Mentor. 
+        The user has submitted an IMAGE/SCREENSHOT for their daily quest: "${questTitle}".
+        
+        TASK:
+        1. Analyze the screenshot. If it shows code, a completed project (like a Scratch maze), or technical documentation, evaluate it.
+        2. VALIDATION: Does this image demonstrate completion of "${questTitle}"?
+        3. FEEDBACK: Start with 'ACCEPTED: ' or 'REJECTED: '. Provide 2-3 specific technical pointers or praise.
+        4. SCORE: 0-100.
+      `
+    });
+  } else {
+    // Pre-process: Strip excessive whitespace and limit size
+    const cleanedContent = fileContent.trim();
+    if (!cleanedContent) {
+      return {
+        isComplete: false,
+        feedback: "The submitted file appears to be empty. Please provide your solution content.",
+        score: 0
+      };
+    }
+
+    // Truncate file content to prevent token overflow (approx 500k characters is ~125k tokens)
+    const truncationLimit = 500000;
+    const truncatedContent = cleanedContent.length > truncationLimit 
+      ? cleanedContent.substring(0, truncationLimit) + "\n... (content truncated: file exceeds 500k chars. Focusing on top half of the file.)"
+      : cleanedContent;
+
+    promptParts.push({
+      text: `
+        You are an Elite Engineering Mentor and Code Reviewer. 
+        The user has submitted a file for their daily quest: "${questTitle}".
+        
+        SUBMISSION CONTEXT:
+        - FILE NAME: ${fileName}
+        - CONTENT PREVIEW:
+        ${truncatedContent}
+        
+        ACTION PROTOCOL:
+        1. VALIDATION: Determine if the submission HONESTLY fulfills the requirements of "${questTitle}". 
+        2. IF REJECTING (isComplete = false): You MUST explain exactly what is missing or incorrect in the feedback. Be encouraging but firm on quality.
+        3. IF ACCEPTING (isComplete = true): Provide 2-3 technical pointers for even better results.
+        4. SCORING: Award a score from 0-100. A score below 60 should typically result in isComplete = false unless it's a very good first attempt.
+        
+        RESPONSE FORMAT (STRICT JSON):
+        {
+          "isComplete": boolean,
+          "feedback": "string (Start with 'REJECTED: ' or 'ACCEPTED: ' followed by detailed, peer-review style feedback)",
+          "score": number
+        }
+      `
+    });
+  }
+
+  // Common response directive
+  promptParts.push({
+    text: `
+      RESPONSE FORMAT (STRICT JSON):
+      {
+        "isComplete": boolean,
+        "feedback": "string (concise summary with specific pointers)",
+        "score": number
+      }
+    `
+  });
 
   try {
     const response = await callWithRetry(() => ai.models.generateContent({
       model,
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts: promptParts }],
       config: {
         responseMimeType: "application/json",
         responseSchema: {
