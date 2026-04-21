@@ -247,6 +247,11 @@ export function Dashboard() {
     setAnalyzingQuestId(quest.id);
     
     try {
+      // Basic size validation
+      if (file.size > 1 * 1024 * 1024) { // 1MB limit
+        throw new Error("File too large. Maximum size is 1MB for source code analysis.");
+      }
+
       // Read file content
       const reader = new FileReader();
       const fileContent = await new Promise<string>((resolve, reject) => {
@@ -801,6 +806,7 @@ function QuestItem({ quest, isAnalyzing, onFileSubmit }: { quest: any, isAnalyzi
                 type="file" 
                 className="hidden" 
                 ref={fileInputRef}
+                accept=".txt,.js,.ts,.tsx,.py,.java,.cpp,.c,.h,.css,.html,.md,.json,.sh,.sql,.yaml,.yml"
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) onFileSubmit(file);

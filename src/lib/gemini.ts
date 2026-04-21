@@ -578,29 +578,52 @@ export const generateDailyQuests = async (specialization: string, availableNodes
 export const analyzeQuestSubmission = async (questTitle: string, fileContent: string, fileName: string) => {
   const model = "gemini-3-flash-preview";
   
+  // Basic validation: Is it really text?
+  // Check for excessive null bytes or control characters that suggest binary
+  const binaryCheck = /[\x00-\x08\x0E-\x1F]/.test(fileContent.substring(0, 500));
+  if (binaryCheck) {
+    return {
+      isComplete: false,
+      feedback: "The AI Mentor detected binary or non-text data. Please upload a readable text-based source file (e.g., .txt, .js, .py, .md).",
+      score: 0
+    };
+  }
+
+  // Pre-process: Strip excessive whitespace and limit size
+  const cleanedContent = fileContent.trim();
+  if (!cleanedContent) {
+    return {
+      isComplete: false,
+      feedback: "The submitted file appears to be empty. Please provide your solution content.",
+      score: 0
+    };
+  }
+
   // Truncate file content to prevent token overflow (approx 10k characters)
-  const truncatedContent = fileContent.length > 10000 
-    ? fileContent.substring(0, 10000) + "\n... (content truncated for analysis)"
-    : fileContent;
+  const truncatedContent = cleanedContent.length > 12000 
+    ? cleanedContent.substring(0, 12000) + "\n... (content truncated for analysis)"
+    : cleanedContent;
 
   const prompt = `
-    You are an Elite Engineering Mentor. 
+    You are an Elite Engineering Mentor and Code Reviewer. 
     The user has submitted a file for their daily quest: "${questTitle}".
     
-    FILE NAME: ${fileName}
-    FILE CONTENT:
+    SUBMISSION CONTEXT:
+    - FILE NAME: ${fileName}
+    - CONTENT PREVIEW:
     ${truncatedContent}
     
-    TASK:
-    1. Analyze if the content of the file reasonably demonstrates completion of the quest.
-    2. If it's a technical quest, look for code, logic, or documentation that matches the title.
-    3. If it's a meta quest, look for reflection, planning, or research.
+    ACTION PROTOCOL:
+    1. VALIDATION: Does this content reasonably demonstrate the work described in "${questTitle}"?
+    2. TECHNICAL REVIEW: Identify specific strengths and areas for improvement.
+    3. SCORING: Award a score from 0-100 based on effort, correctness, and best practices.
     
-    RETURN:
-    A JSON object with:
-    - isComplete: boolean (true if the quest is satisfied)
-    - feedback: string (2-3 bullet points for improvement or praise)
-    - score: number (0-100 based on quality)
+    RESPONSE FORMAT (STRICT JSON):
+    {
+      "isComplete": boolean,
+      "feedback": "A concise summary with 2-3 specific technical pointers.",
+      "score": number
+    }
   `;
 
   try {
@@ -628,16 +651,23 @@ export const analyzeQuestSubmission = async (questTitle: string, fileContent: st
       console.error("JSON Parse Error in analyzeQuestSubmission:", text);
       return { 
         isComplete: false, 
-        feedback: "The mentor had trouble reading your submission format. Please ensure it's a text-based file.",
+        feedback: "The mentor provided feedback in an unusual format. Please try re-submitting.",
         score: 0 
       };
     }
   } catch (error: any) {
     console.error("Gemini API Error (analyzeQuestSubmission):", error);
-    // Provide a more descriptive error message if possible
-    const errorMessage = error?.message?.includes("quota") 
-      ? "The AI Mentor is currently overloaded (Quota Exceeded). Please try again in 60 seconds."
-      : "Analysis failed. Please try again with a smaller or more readable file.";
+    
+    // Better error categorization
+    let errorMessage = "Analysis failed. The file might be too complex or contain unsupported characters.";
+    
+    if (error?.message?.includes("quota") || error?.status === 429) {
+      errorMessage = "The AI Mentor is currently overloaded (Quota Exceeded). Please wait 60 seconds and try again.";
+    } else if (error?.message?.includes("safety") || error?.message?.includes("finishReason: SAFETY")) {
+      errorMessage = "The analysis was blocked by safety filters. Ensure your submission does not contain sensitive or inappropriate content.";
+    } else if (error?.message?.includes("Internal error")) {
+      errorMessage = "The AI engine encountered a transient error. Please try one more time.";
+    }
       
     return { isComplete: false, feedback: errorMessage, score: 0 };
   }
