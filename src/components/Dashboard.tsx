@@ -247,9 +247,9 @@ export function Dashboard() {
     setAnalyzingQuestId(quest.id);
     
     try {
-      // Basic size validation - increased to 5MB
-      if (file.size > 5 * 1024 * 1024) { 
-        throw new Error("File too large. Maximum size for Nexus Source analysis is 5MB. Please upload a smaller snippet or the core source file.");
+      // Basic size validation - increased to 50MB to handle large monorepo files or datasets
+      if (file.size > 50 * 1024 * 1024) { 
+        throw new Error("File too large. Maximum size for Nexus Source analysis is 50MB. If your solution is larger, please upload the primary logic file.");
       }
 
       // Read file content

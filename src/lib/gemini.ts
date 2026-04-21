@@ -576,7 +576,7 @@ export const generateDailyQuests = async (specialization: string, availableNodes
 };
 
 export const analyzeQuestSubmission = async (questTitle: string, fileContent: string, fileName: string) => {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-3.1-pro-preview";
   
   // Basic validation: Is it really text?
   // Check for excessive null bytes or control characters that suggest binary
@@ -599,10 +599,10 @@ export const analyzeQuestSubmission = async (questTitle: string, fileContent: st
     };
   }
 
-  // Truncate file content to prevent token overflow (approx 80k characters is ~20k tokens)
-  const truncationLimit = 80000;
+  // Truncate file content to prevent token overflow (approx 500k characters is ~125k tokens)
+  const truncationLimit = 500000;
   const truncatedContent = cleanedContent.length > truncationLimit 
-    ? cleanedContent.substring(0, truncationLimit) + "\n... (content truncated: file exceeds 80k chars)"
+    ? cleanedContent.substring(0, truncationLimit) + "\n... (content truncated: file exceeds 500k chars. Focusing on top half of the file.)"
     : cleanedContent;
 
   const prompt = `
