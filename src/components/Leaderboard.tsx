@@ -39,17 +39,24 @@ export function Leaderboard() {
     });
 
     const calculateNexusRank = async () => {
+      if (!profile) return;
       try {
         const totalColl = collection(db, 'public_profiles');
         const totalSnapshot = await getCountFromServer(totalColl);
-        setNexusTotal(totalSnapshot.data().count);
+        const totalCount = totalSnapshot.data().count;
+        setNexusTotal(totalCount);
 
         const rankQuery = query(
           collection(db, 'public_profiles'),
           where('xp', '>', profile.xp)
         );
         const rankSnapshot = await getCountFromServer(rankQuery);
-        setNexusRank(rankSnapshot.data().count + 1);
+        const rank = rankSnapshot.data().count + 1;
+        setNexusRank(rank);
+
+        // More accurate percentile based on real population
+        const realPercentile = totalCount > 0 ? (rank / totalCount) * 100 : 50;
+        setCalculatedPercentile(realPercentile.toFixed(2));
       } catch (error) {
         console.error("Failed to calculate Nexus rank", error);
       }
@@ -57,36 +64,21 @@ export function Leaderboard() {
 
     calculateNexusRank();
     return () => unsubscribe();
-  }, [profile?.xp]);
+  }, [profile?.xp, profile?.uid]);
 
-  // Global Percentile Calculation Logic
-  // We use a logarithmic distribution to map Nexus XP to Global Percentiles
-  // Level 1 (0 XP) -> Bottom 50%
-  // Level 10 (10k XP) -> Top 10%
-  // Level 50 (50k XP) -> Top 1%
-  // Level 100 (100k XP) -> Top 0.1%
-  const calculateGlobalPercentile = (xp: number): string => {
-    if (xp === 0) return "50.00";
-    const logXp = Math.log10(xp + 1);
-    const percentile = Math.max(0.01, 50 / Math.pow(logXp + 1, 2.5));
-    return percentile.toFixed(2);
-  };
-
-  const globalPercentile = profile ? calculateGlobalPercentile(profile.xp) : "---";
-  const estimatedGlobalRank = profile 
-    ? Math.floor((parseFloat(globalPercentile) / 100) * GLOBAL_ENGINEER_COUNT).toLocaleString()
-    : "---";
+  const [calculatedPercentile, setCalculatedPercentile] = useState("---");
 
   const getTier = (percentile: string) => {
     const p = parseFloat(percentile);
-    if (p <= 0.1) return { label: "ELITE (TOP 0.1%)", color: "text-purple-400", icon: <Cpu className="h-4 w-4" /> };
-    if (p <= 1) return { label: "MASTER (TOP 1%)", color: "text-yellow-500", icon: <Star className="h-4 w-4" /> };
-    if (p <= 5) return { label: "EXPERT (TOP 5%)", color: "text-emerald-400", icon: <Zap className="h-4 w-4" /> };
-    if (p <= 15) return { label: "PROFESSIONAL", color: "text-blue-400", icon: <Shield className="h-4 w-4" /> };
+    if (isNaN(p)) return { label: "PRACTITIONER", color: "text-zinc-500", icon: <Target className="h-4 w-4" /> };
+    if (p <= 1) return { label: "ELITE (TOP 1%)", color: "text-purple-400", icon: <Cpu className="h-4 w-4" /> };
+    if (p <= 5) return { label: "MASTER (TOP 5%)", color: "text-yellow-500", icon: <Star className="h-4 w-4" /> };
+    if (p <= 10) return { label: "EXPERT (TOP 10%)", color: "text-emerald-400", icon: <Zap className="h-4 w-4" /> };
+    if (p <= 20) return { label: "PROFESSIONAL", color: "text-blue-400", icon: <Shield className="h-4 w-4" /> };
     return { label: "PRACTITIONER", color: "text-zinc-500", icon: <Target className="h-4 w-4" /> };
   };
 
-  const tier = getTier(globalPercentile);
+  const tier = getTier(calculatedPercentile);
 
   return (
     <div className="h-full p-4 md:p-8 overflow-y-auto bg-zinc-950 selection:bg-white selection:text-black">
@@ -129,19 +121,23 @@ export function Leaderboard() {
                 </span>
               </div>
 
-              <h3 className="text-[10px] md:text-sm font-mono text-zinc-500 uppercase tracking-widest mb-2">Verified Nexus Rank</h3>
+              <h3 className="text-[10px] md:text-sm font-mono text-zinc-500 uppercase tracking-widest mb-2">Verified Nexus Standing</h3>
               <div className="text-6xl md:text-8xl font-black tracking-tighter mb-6 flex items-baseline gap-2 text-emerald-500">
                 <span className="text-xl md:text-2xl text-emerald-900">#</span>{nexusRank || "---"}
               </div>
 
               <div className="space-y-6 pt-6 border-t border-zinc-800">
                 <div>
-                  <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1">Verified World Percentile</p>
-                  <p className="text-3xl font-black tracking-tight">{globalPercentile}%</p>
+                  <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1">Nexus Percentile (Verified)</p>
+                  <p className="text-3xl font-black tracking-tight">{calculatedPercentile}%</p>
                 </div>
                 <div>
-                  <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1">Estimated Global Rank</p>
-                  <p className="text-3xl font-black tracking-tight">#{estimatedGlobalRank}</p>
+                  <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mb-1">Projected Industry Rank</p>
+                  <p className="text-3xl font-black tracking-tight">
+                    #{nexusRank && calculatedPercentile !== "---" 
+                      ? Math.floor((parseFloat(calculatedPercentile) / 100) * GLOBAL_ENGINEER_COUNT).toLocaleString() 
+                      : "---"}
+                  </p>
                 </div>
               </div>
 
@@ -156,10 +152,10 @@ export function Leaderboard() {
           <section className="p-8 rounded-[2rem] border border-zinc-800 bg-black/50">
             <h3 className="text-xs font-mono text-zinc-500 uppercase tracking-widest mb-6">Industry Comparison</h3>
             <div className="space-y-4">
-              <BenchmarkItem label="FAANG / Staff Level" percentile="0.1" current={parseFloat(globalPercentile)} />
-              <BenchmarkItem label="Senior Engineer (L5)" percentile="2.0" current={parseFloat(globalPercentile)} />
-              <BenchmarkItem label="Mid-Level Engineer" percentile="15.0" current={parseFloat(globalPercentile)} />
-              <BenchmarkItem label="Junior / Entry Level" percentile="45.0" current={parseFloat(globalPercentile)} />
+              <BenchmarkItem label="FAANG / Staff Level" percentile="0.1" current={parseFloat(calculatedPercentile)} />
+              <BenchmarkItem label="Senior Engineer (L5)" percentile="2.0" current={parseFloat(calculatedPercentile)} />
+              <BenchmarkItem label="Mid-Level Engineer" percentile="15.0" current={parseFloat(calculatedPercentile)} />
+              <BenchmarkItem label="Junior / Entry Level" percentile="45.0" current={parseFloat(calculatedPercentile)} />
             </div>
           </section>
         </div>

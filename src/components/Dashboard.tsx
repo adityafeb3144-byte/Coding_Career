@@ -18,6 +18,7 @@ export function Dashboard() {
   const [loadingQuests, setLoadingQuests] = useState(false);
   const [isInitializingRoadmap, setIsInitializingRoadmap] = useState(false);
   const [userRank, setUserRank] = useState<number | null>(null);
+  const [nexusTotal, setNexusTotal] = useState<number>(0);
   const [currentChapter, setCurrentChapter] = useState<any>(null);
   const [hasRoadmap, setHasRoadmap] = useState<boolean | null>(null);
   const [xpGain, setXpGain] = useState<{ amount: number, id: string } | null>(null);
@@ -77,9 +78,13 @@ export function Dashboard() {
       handleFirestoreError(error, OperationType.GET, `users/${profile.uid}/daily_quests`);
     });
 
-    // Fetch Rank
+    // Fetch Rank and Total Population
     const fetchRank = async () => {
       try {
+        const totalColl = collection(db, 'public_profiles');
+        const totalSnapshot = await getCountFromServer(totalColl);
+        setNexusTotal(totalSnapshot.data().count);
+
         const rankQuery = query(
           collection(db, 'public_profiles'),
           where('xp', '>', profile.xp)
@@ -398,14 +403,7 @@ export function Dashboard() {
   const levelStartXP = (profile.level - 1) * 1000;
   const progress = Math.min(100, Math.max(0, ((profile.xp - levelStartXP) / 1000) * 100));
 
-  const calculateGlobalPercentile = (xp: number): string => {
-    if (xp === 0) return "50.00";
-    const logXp = Math.log10(xp + 1);
-    const percentile = Math.max(0.01, 50 / Math.pow(logXp + 1, 2.5));
-    return percentile.toFixed(2);
-  };
-
-  const globalPercentile = calculateGlobalPercentile(profile.xp);
+  const percentile = userRank && nexusTotal > 0 ? ((userRank / nexusTotal) * 100).toFixed(2) : "---";
 
   return (
     <div className="h-full p-4 md:p-8 overflow-y-auto bg-zinc-950">
@@ -414,9 +412,10 @@ export function Dashboard() {
           <motion.h2 
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-sm font-mono text-zinc-500 uppercase tracking-widest mb-1"
+            className="text-[10px] font-mono text-emerald-500/70 uppercase tracking-[0.2em] mb-1 flex items-center gap-2"
           >
-            System Status: Operational // Global Sync Active
+            <div className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            System Status: Operational // Real-Time Ranking Verified
           </motion.h2>
           <motion.h1 
             initial={{ opacity: 0, y: -10 }}
@@ -526,7 +525,7 @@ export function Dashboard() {
               <div className="text-right">
                 <div className="flex items-center gap-1 text-emerald-500 font-bold text-[9px] uppercase tracking-widest">
                   <Trophy className="h-3 w-3" />
-                  Nexus Rank
+                  Verified Standing
                 </div>
                 <div className="text-xl font-black text-white">#{userRank || '---'}</div>
               </div>
