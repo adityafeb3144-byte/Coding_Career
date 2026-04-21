@@ -599,9 +599,10 @@ export const analyzeQuestSubmission = async (questTitle: string, fileContent: st
     };
   }
 
-  // Truncate file content to prevent token overflow (approx 10k characters)
-  const truncatedContent = cleanedContent.length > 12000 
-    ? cleanedContent.substring(0, 12000) + "\n... (content truncated for analysis)"
+  // Truncate file content to prevent token overflow (approx 80k characters is ~20k tokens)
+  const truncationLimit = 80000;
+  const truncatedContent = cleanedContent.length > truncationLimit 
+    ? cleanedContent.substring(0, truncationLimit) + "\n... (content truncated: file exceeds 80k chars)"
     : cleanedContent;
 
   const prompt = `
@@ -659,7 +660,7 @@ export const analyzeQuestSubmission = async (questTitle: string, fileContent: st
     console.error("Gemini API Error (analyzeQuestSubmission):", error);
     
     // Better error categorization
-    let errorMessage = "Analysis failed. The file might be too complex or contain unsupported characters.";
+    let errorMessage = "Analysis failed. The logic might be too dense for a quick review. Try uploading a more specialized file.";
     
     if (error?.message?.includes("quota") || error?.status === 429) {
       errorMessage = "The AI Mentor is currently overloaded (Quota Exceeded). Please wait 60 seconds and try again.";

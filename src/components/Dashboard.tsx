@@ -247,9 +247,9 @@ export function Dashboard() {
     setAnalyzingQuestId(quest.id);
     
     try {
-      // Basic size validation
-      if (file.size > 1 * 1024 * 1024) { // 1MB limit
-        throw new Error("File too large. Maximum size is 1MB for source code analysis.");
+      // Basic size validation - increased to 5MB
+      if (file.size > 5 * 1024 * 1024) { 
+        throw new Error("File too large. Maximum size for Nexus Source analysis is 5MB. Please upload a smaller snippet or the core source file.");
       }
 
       // Read file content
