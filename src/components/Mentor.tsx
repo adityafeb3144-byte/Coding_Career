@@ -60,18 +60,39 @@ export function Mentor() {
     setLoading(true);
 
     try {
-      // Add user message to Firestore
+      // Build history and ensure it's alternating user/model
+      const rawHistory = messages.map(m => ({ 
+        role: m.role === 'user' ? 'user' : 'assistant', 
+        content: m.content 
+      }));
+      
+      // Filter history to ensure alternating roles
+      const filteredHistory: { role: string; content: string }[] = [];
+      rawHistory.forEach((msg) => {
+        if (filteredHistory.length === 0 || filteredHistory[filteredHistory.length - 1].role !== msg.role) {
+          filteredHistory.push(msg);
+        }
+      });
+
+      // Add user message to Firestore AFTER building history to prioritize closure state for API call
+      // or just ensure we don't duplicate
       await addDoc(collection(db, 'users', profile.uid, 'mentor_chat'), {
         role: 'user',
         content: userMsg,
         timestamp: serverTimestamp()
       });
 
-      // Get AI response
-      const history = messages.map(m => ({ role: m.role, content: m.content }));
-      history.push({ role: 'user', content: userMsg });
+      // Final history for AI
+      const finalHistory = [...filteredHistory];
+      if (finalHistory.length === 0 || finalHistory[finalHistory.length - 1].role !== 'user') {
+        finalHistory.push({ role: 'user', content: userMsg });
+      } else {
+        // If the last message was somehow already 'user', we replace it with the latest one 
+        // to avoid consecutive roles
+        finalHistory[finalHistory.length - 1].content = userMsg;
+      }
       
-      const aiResponse = await getMentorResponse(history, profile);
+      const aiResponse = await getMentorResponse(finalHistory, profile);
       const aiText = typeof aiResponse === 'string' ? aiResponse : aiResponse.text;
 
       // Add AI message to Firestore

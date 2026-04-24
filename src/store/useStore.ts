@@ -14,6 +14,7 @@ interface UserProfile {
   intensity: string;
   weeklyHours: number;
   lastActive?: string | null;
+  lastActivity?: any;
   lastMarketSkillAdded?: string;
 }
 

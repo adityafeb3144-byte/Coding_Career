@@ -20,6 +20,8 @@ export function Dashboard() {
   const [isInitializingRoadmap, setIsInitializingRoadmap] = useState(false);
   const [userRank, setUserRank] = useState<number | null>(null);
   const [nexusTotal, setNexusTotal] = useState<number>(0);
+  const [volatility, setVolatility] = useState(0);
+  const [projectedSlippage, setProjectedSlippage] = useState(0);
   const [currentChapter, setCurrentChapter] = useState<any>(null);
   const [hasRoadmap, setHasRoadmap] = useState<boolean | null>(null);
   const [xpGain, setXpGain] = useState<{ amount: number, id: string } | null>(null);
@@ -217,15 +219,31 @@ export function Dashboard() {
       try {
         const totalColl = collection(db, 'public_profiles');
         const totalSnapshot = await getCountFromServer(totalColl);
-        setNexusTotal(totalSnapshot.data().count);
+        const total = totalSnapshot.data().count;
+        setNexusTotal(total);
 
         // Rank by Market Power instead of raw XP
+        const mp = profile.marketPower || 0;
         const rankQuery = query(
           collection(db, 'public_profiles'),
-          where('marketPower', '>', profile.marketPower || 0)
+          where('marketPower', '>', mp)
         );
         const rankSnapshot = await getCountFromServer(rankQuery);
-        setUserRank(rankSnapshot.data().count + 1);
+        const rank = rankSnapshot.data().count + 1;
+        setUserRank(rank);
+
+        // Calculate Volatility (Market Decay)
+        // If last activity was > 24 hours ago, volatility increases
+        const lastActive = profile.lastActivity?.toMillis?.() || Date.now();
+        const hoursInactive = (Date.now() - lastActive) / (1000 * 60 * 60);
+        const volatility = Math.min(100, Math.max(0, (hoursInactive - 24) * 2));
+        setVolatility(volatility);
+        
+        // Projected Industry Rank (Simulate drift)
+        // Drift is 0.1% of total population per hour of volatility
+        const drift = Math.floor((volatility / 100) * (total * 0.05));
+        setProjectedSlippage(drift);
+
       } catch (error) {
         console.error("Failed to fetch rank", error);
       }
@@ -239,7 +257,7 @@ export function Dashboard() {
       unsubscribe();
       unsubscribeRoadmap();
     };
-  }, [profile?.uid, profile?.xp]); // Re-fetch rank when XP or user changes
+  }, [profile?.uid, profile?.xp, profile?.marketPower, profile?.lastActivity]); // Re-fetch rank when key metrics change
 
   const generateNewQuests = async (force = false) => {
     if (!profile || isGeneratingRef.current || loadingQuests) return;
@@ -319,6 +337,7 @@ export function Dashboard() {
         xp: increment(rewardXp),
         marketPower: increment(marketPowerGain),
         lastActive: new Date().toISOString(),
+        lastActivity: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
       if (shouldUpdateStreak) {
@@ -331,6 +350,7 @@ export function Dashboard() {
       batch.set(doc(db, 'public_profiles', profile.uid), {
         xp: increment(rewardXp),
         marketPower: increment(marketPowerGain),
+        lastActivity: serverTimestamp(),
         updatedAt: serverTimestamp()
       }, { merge: true });
 
@@ -948,7 +968,12 @@ export function Dashboard() {
               <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-mono text-zinc-500">GLOBAL_POSITION</span>
-                  <span className="text-[10px] font-mono text-white font-bold">TOP {percentile}%</span>
+                  <div className="text-right">
+                    <span className="text-[10px] font-mono text-white font-bold">TOP {percentile}%</span>
+                    {projectedSlippage > 0 && (
+                      <span className="text-[8px] font-mono text-red-500 block">-{projectedSlippage} DRIFT_SLIP</span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-[9px] font-mono text-zinc-600">RANK_ID</span>
@@ -958,15 +983,20 @@ export function Dashboard() {
 
               <div className="p-3 rounded-lg bg-black/40 border border-white/5 space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-zinc-500">TRAJECTORY_SYNC</span>
-                  <span className="text-[10px] font-mono text-blue-400 font-bold uppercase">Active</span>
+                  <span className="text-[10px] font-mono text-zinc-500">VOLATILITY_INDEX</span>
+                  <span className={cn(
+                    "text-[10px] font-mono font-bold uppercase",
+                    volatility > 50 ? "text-red-500 animate-pulse" : volatility > 10 ? "text-orange-500" : "text-emerald-500"
+                  )}>
+                    {volatility > 0 ? `${volatility.toFixed(1)}%` : "STABLE"}
+                  </span>
                 </div>
                 <div className="space-y-1">
                   <div className="flex justify-between text-[8px] font-mono text-zinc-600 uppercase">
-                    <span>Sync Progress</span>
-                    <span>{progress.toFixed(1)}%</span>
+                    <span>Market Stability</span>
+                    <span>{Math.max(0, 100 - volatility).toFixed(1)}%</span>
                   </div>
-                  <Progress value={progress} className="h-1 bg-zinc-800" />
+                  <Progress value={100 - volatility} className={cn("h-1", volatility > 50 ? "bg-red-900" : "bg-zinc-800")} />
                 </div>
               </div>
 

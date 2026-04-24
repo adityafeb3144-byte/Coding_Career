@@ -26,8 +26,16 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T
       return await fn();
     } catch (error: any) {
       lastError = error;
-      const isRateLimit = error?.message?.includes('429') || error?.status === 429 || error?.code === 429;
+      const errorMessage = error?.message || '';
+      const isRateLimit = errorMessage.includes('429') || error?.status === 429 || error?.code === 429;
       
+      console.error(`Gemini API Error details:`, {
+        status: error?.status,
+        code: error?.code,
+        message: errorMessage,
+        attempt: i + 1
+      });
+
       if (isRateLimit) {
         if (i < maxRetries - 1) {
           // Exponential backoff: 2s, 4s, 8s, 16s... + jitter
@@ -48,7 +56,7 @@ async function callWithRetry<T>(fn: () => Promise<T>, maxRetries = 5): Promise<T
 }
 
 export const getMentorResponse = async (history: { role: string, content: string }[], userProfile: any) => {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-flash-latest";
   
   const systemInstruction = `
     You are the Nexus Career OS AI Mentor. 
@@ -162,7 +170,7 @@ export const getMentorResponse = async (history: { role: string, content: string
 
   try {
     const response = await callWithRetry(() => ai.models.generateContent({
-      model,
+      model: "gemini-flash-latest",
       contents,
       config: {
         systemInstruction,
@@ -186,7 +194,7 @@ export const getMentorResponse = async (history: { role: string, content: string
 };
 
 export const generateInitialRoadmap = async (specialization: string, intensity: string) => {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-flash-latest";
   const prompt = `
     Generate a structured, sequential career roadmap for a ${specialization} journey (Software Engineering + Cloud Computing + AI/ML) with ${intensity} intensity.
     
@@ -317,7 +325,7 @@ export const resequenceRoadmap = async (nodes: any[]) => {
 };
 
 export const generateMarketIntelligence = async (specialization: string) => {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-flash-latest";
   const prompt = `
     You are a Global Market Intelligence AI for Software Engineering.
     Analyze current market trends for the specialization: "${specialization}".
@@ -373,7 +381,7 @@ export const generateMarketIntelligence = async (specialization: string) => {
 };
 
 export const generateOpportunities = async (specialization: string, level: number, completedNodes: any[]) => {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-flash-latest";
   
   const skillSummary = completedNodes.length > 0 
     ? completedNodes.map(n => `- ${n.title} (${n.category || 'General'})`).join('\n')
@@ -460,7 +468,7 @@ export const generateOpportunities = async (specialization: string, level: numbe
 };
 
 export const generateMarketDemandSkill = async (specialization: string, currentRoadmap: any[]) => {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-flash-latest";
   const prompt = `
     You are a Market Intelligence AI for a career platform.
     The user is a ${specialization} Engineer.
@@ -528,7 +536,7 @@ export const generateMarketDemandSkill = async (specialization: string, currentR
 };
 
 export const generateDailyQuests = async (specialization: string, availableNodes: any[], completedNodes: any[]) => {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-flash-latest";
   
   // Find the node with the lowest 'order' in availableNodes - this is the "Current Chapter"
   const currentChapter = availableNodes.sort((a, b) => (a.order || 0) - (b.order || 0))[0];
@@ -597,7 +605,7 @@ export const generateDailyQuests = async (specialization: string, availableNodes
 };
 
 export const analyzeQuestSubmission = async (questTitle: string, fileContent: string, fileName: string, mimeType?: string) => {
-  const model = "gemini-3.1-pro-preview";
+  const model = "gemini-flash-latest";
   
   const isImage = mimeType?.startsWith('image/');
   const isScratch = fileName.toLowerCase().endsWith('.sb3');
