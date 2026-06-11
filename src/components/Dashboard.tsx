@@ -385,8 +385,8 @@ export function Dashboard() {
 
       // Read file content
       const reader = new FileReader();
-      const isImage = file.type.startsWith('image/');
-      const isScratch = file.name.toLowerCase().endsWith('.sb3');
+      const isImage = file.type?.startsWith('image/') || false;
+      const isScratch = file.name?.toLowerCase().endsWith('.sb3') || false;
       
       const fileContent = await new Promise<string>((resolve, reject) => {
         reader.onload = (e) => resolve(e.target?.result as string);

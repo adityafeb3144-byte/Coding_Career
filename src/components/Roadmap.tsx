@@ -297,6 +297,10 @@ function RoadmapContent() {
 
     // Ensure xp is a valid number
     const rewardXp = typeof xp === 'number' ? xp : 50;
+    
+    // Calculate marketPowerGain as per the specific skill's world demand and learned progress
+    const demand = typeof selectedNode.marketDemand === 'number' ? selectedNode.marketDemand : 0.5;
+    const marketPowerGain = Math.round(rewardXp * demand);
 
     try {
       const updatedLectures = selectedNode.lectures.map((l: any) => 
@@ -316,9 +320,10 @@ function RoadmapContent() {
         status: allCompleted ? 'completed' : 'available'
       }, { merge: true });
 
-      // Update user XP and Streak
+      // Update user XP, Streak, and marketPower
       const userUpdate: any = {
         xp: increment(rewardXp),
+        marketPower: increment(marketPowerGain),
         lastActive: new Date().toISOString()
       };
       if (shouldUpdateStreak) {
@@ -328,7 +333,8 @@ function RoadmapContent() {
       batch.set(doc(db, 'users', profile.uid), userUpdate, { merge: true });
 
       batch.set(doc(db, 'public_profiles', profile.uid), {
-        xp: increment(rewardXp)
+        xp: increment(rewardXp),
+        marketPower: increment(marketPowerGain)
       }, { merge: true });
 
       await batch.commit();
@@ -340,10 +346,11 @@ function RoadmapContent() {
         status: allCompleted ? 'completed' : 'available'
       });
 
-      // Optimistically update store profile for instant UI feedback
+      // Optimistically update store profile for instant UI feedback and rank recalculation
       useStore.getState().setProfile({
         ...profile,
         xp: profile.xp + rewardXp,
+        marketPower: (profile.marketPower || 0) + marketPowerGain,
         streak: shouldUpdateStreak ? newStreak : profile.streak,
         lastActive: new Date().toISOString()
       });
@@ -362,6 +369,11 @@ function RoadmapContent() {
     // Ensure xp is a valid number
     const rewardXp = typeof xp === 'number' ? xp : 250;
 
+    // Calculate marketPowerGain based on this node/chapter's market demand
+    const isSelected = selectedNode && selectedNode.id === nodeId;
+    const demand = isSelected && typeof selectedNode.marketDemand === 'number' ? selectedNode.marketDemand : 0.5;
+    const marketPowerGain = Math.round(rewardXp * demand);
+
     try {
       const batch = writeBatch(db);
 
@@ -373,12 +385,13 @@ function RoadmapContent() {
         status: 'completed'
       }, { merge: true });
 
-      // Update user XP and level
+      // Update user XP, level, and marketPower
       const newXp = profile.xp + rewardXp;
       const newLevel = Math.floor(newXp / 1000) + 1;
       
       const userUpdate: any = {
         xp: increment(rewardXp),
+        marketPower: increment(marketPowerGain),
         level: newLevel,
         lastActive: new Date().toISOString()
       };
@@ -390,6 +403,7 @@ function RoadmapContent() {
 
       batch.set(doc(db, 'public_profiles', profile.uid), {
         xp: increment(rewardXp),
+        marketPower: increment(marketPowerGain),
         level: newLevel
       }, { merge: true });
 
@@ -399,6 +413,7 @@ function RoadmapContent() {
       useStore.getState().setProfile({
         ...profile,
         xp: newXp,
+        marketPower: (profile.marketPower || 0) + marketPowerGain,
         level: newLevel,
         streak: shouldUpdateStreak ? newStreak : profile.streak,
         lastActive: new Date().toISOString()

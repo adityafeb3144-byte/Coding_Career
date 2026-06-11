@@ -16,6 +16,7 @@ export function Mentor() {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [streamingText, setStreamingText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -49,7 +50,7 @@ export function Mentor() {
         behavior: 'smooth'
       });
     }
-  }, [messages, loading]);
+  }, [messages, loading, streamingText]);
 
   const handleSend = async (overrideInput?: string) => {
     const messageToSend = overrideInput || input;
@@ -92,7 +93,14 @@ export function Mentor() {
         finalHistory[finalHistory.length - 1].content = userMsg;
       }
       
-      const aiResponse = await getMentorResponse(finalHistory, profile);
+      // Fetch the roadmap once before calling Gemini to provide full context
+      const roadmapSnap = await getDocs(collection(db, 'users', profile.uid, 'roadmap'));
+      const roadmapData = roadmapSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      setStreamingText('...');
+      const aiResponse = await getMentorResponse(finalHistory, profile, roadmapData, (partialText) => {
+        setStreamingText(partialText);
+      });
       const aiText = typeof aiResponse === 'string' ? aiResponse : aiResponse.text;
 
       // Add AI message to Firestore
@@ -101,6 +109,7 @@ export function Mentor() {
         content: aiText || "Consultation complete. I've updated your trajectory accordingly.",
         timestamp: serverTimestamp()
       });
+      setStreamingText('');
 
       // Handle function calls if any
       if (typeof aiResponse !== 'string' && aiResponse.functionCalls) {
@@ -135,6 +144,7 @@ export function Mentor() {
       }
     } catch (error) {
       console.error("Mentor chat failed", error);
+      setStreamingText('');
       await addDoc(collection(db, 'users', profile.uid, 'mentor_chat'), {
         role: 'assistant',
         content: "⚠️ **System Error**: I'm having trouble connecting to my neural core. Please check your connection or try again in a moment.",
@@ -142,6 +152,7 @@ export function Mentor() {
       });
     } finally {
       setLoading(false);
+      setStreamingText('');
     }
   };
 
@@ -207,7 +218,26 @@ export function Mentor() {
               </div>
             </motion.div>
           ))}
-          {loading && (
+
+          {/* Active Streaming Message */}
+          {streamingText && (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex gap-4 flex-row"
+            >
+              <Avatar className="h-8 w-8 border border-zinc-800">
+                <AvatarFallback className="bg-purple-500/20 text-purple-500"><Bot className="h-4 w-4" /></AvatarFallback>
+              </Avatar>
+              <div className="max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed bg-zinc-900 text-zinc-200 border border-zinc-800 rounded-tl-none">
+                <div className="markdown-body text-zinc-200 duration-150">
+                  <ReactMarkdown>{streamingText}</ReactMarkdown>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {loading && !streamingText && (
             <div className="flex gap-4">
               <Avatar className="h-8 w-8 border border-zinc-800">
                 <AvatarFallback className="bg-purple-500/20 text-purple-500"><Bot className="h-4 w-4" /></AvatarFallback>

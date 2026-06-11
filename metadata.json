@@ -1,5 +1,6 @@
 {
   "name": "Nexus Career OS",
   "description": "A startup-grade AI-powered career operating system for Software, Cloud, and AI Engineers.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

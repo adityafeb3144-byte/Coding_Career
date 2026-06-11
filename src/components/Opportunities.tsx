@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { collection, query, onSnapshot, doc, serverTimestamp, getDocs, writeBatch, updateDoc } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, serverTimestamp, getDocs, writeBatch, updateDoc, setDoc, increment } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -23,8 +23,14 @@ export function Opportunities() {
     const q = query(oppsRef);
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
-      setOpps(data);
+      const data = snapshot.docs.map(d => {
+        const item = d.data();
+        return { ...item, id: d.id }; // Ensure doc ID takes precedence
+      }) as any[];
+      
+      // Deduplicate by ID just in case
+      const uniqueOpps = Array.from(new Map(data.map(item => [item.id, item])).values());
+      setOpps(uniqueOpps);
       
       // Check if we need to refresh (6 hours)
       const now = Date.now();
@@ -60,6 +66,9 @@ export function Opportunities() {
       const newOpps = await generateOpportunities(profile.specialization, profile.level, completedNodes);
       
       if (newOpps.length > 0) {
+        // Deduplicate new opportunities by ID
+        const uniqueNewOpps = Array.from(new Map(newOpps.map((item: any) => [item.id, item])).values());
+        
         const batch = writeBatch(db);
         
         // Clear old ones
@@ -67,8 +76,8 @@ export function Opportunities() {
         oldOppsSnap.docs.forEach(d => batch.delete(d.ref));
         
         // Add new ones
-        newOpps.forEach((opp: any) => {
-          const newDocRef = doc(collection(db, 'users', profile.uid, 'opportunities'));
+        uniqueNewOpps.forEach((opp: any) => {
+          const newDocRef = doc(db, 'users', profile.uid, 'opportunities', opp.id);
           batch.set(newDocRef, {
             ...opp,
             updatedAt: serverTimestamp()
@@ -100,14 +109,50 @@ export function Opportunities() {
     return `${Math.floor(hours / 24)}d ago`;
   };
 
-  const toggleComplete = async (oppId: string, currentState: boolean) => {
+  const toggleComplete = async (oppId: string, currentState: boolean, reward?: number) => {
     if (!profile) return;
     try {
       const oppRef = doc(db, 'users', profile.uid, 'opportunities', oppId);
-      await updateDoc(oppRef, {
-        completed: !currentState,
+      const isCompleting = !currentState;
+      
+      // Update opportunity status
+      await setDoc(oppRef, {
+        completed: isCompleting,
         updatedAt: serverTimestamp()
-      });
+      }, { merge: true });
+
+      // Add XP and Market Power to user profile if completing
+      if (isCompleting) {
+        const rewardXp = reward || 250;
+        const opp = opps.find(o => o.id === oppId);
+        const demand = opp && typeof opp.marketDemand === 'number' ? opp.marketDemand : 0.6;
+        const marketPowerGain = Math.round(rewardXp * demand);
+
+        const batch = writeBatch(db);
+
+        // Update user XP, marketPower, lastActive
+        batch.set(doc(db, 'users', profile.uid), {
+          xp: increment(rewardXp),
+          marketPower: increment(marketPowerGain),
+          lastActive: new Date().toISOString()
+        }, { merge: true });
+
+        // Update public profile for leaderboard
+        batch.set(doc(db, 'public_profiles', profile.uid), {
+          xp: increment(rewardXp),
+          marketPower: increment(marketPowerGain)
+        }, { merge: true });
+
+        await batch.commit();
+
+        // Optimistically update store profile for instant local state sync
+        useStore.getState().setProfile({
+          ...profile,
+          xp: profile.xp + rewardXp,
+          marketPower: (profile.marketPower || 0) + marketPowerGain,
+          lastActive: new Date().toISOString()
+        });
+      }
     } catch (error) {
       console.error("Failed to toggle complete status:", error);
     }
@@ -151,8 +196,10 @@ export function Opportunities() {
               <div key={`loading-${i}`} className="h-64 bg-zinc-900 animate-pulse rounded-2xl border border-zinc-800" />
             ))
           ) : opps.length > 0 ? (
-            opps.sort((a, b) => b.matchScore - a.matchScore).map((opp, i) => {
-              const learnedSkills = opp.requirements.filter((r: string) => !opp.missingSkills?.includes(r));
+            [...opps].sort((a, b) => (b.matchScore || 0) - (a.matchScore || 0)).map((opp, i) => {
+              const requirements = Array.isArray(opp.requirements) ? opp.requirements : [];
+              const missingSkills = Array.isArray(opp.missingSkills) ? opp.missingSkills : [];
+              const learnedSkills = requirements.filter((r: string) => !missingSkills.includes(r));
               
               return (
               <motion.div
@@ -200,7 +247,7 @@ export function Opportunities() {
                     <div className="flex justify-between items-start gap-4">
                       <div>
                         <Badge variant="outline" className="mb-2 border-zinc-700 text-zinc-500 text-[10px] font-mono">
-                          {opp.type.toUpperCase()}
+                          {opp.type?.toUpperCase() || 'OPPORTUNITY'}
                         </Badge>
                         <CardTitle className="text-xl font-black tracking-tight flex items-center gap-2">
                           {opp.type === 'Job' && <Briefcase className="h-5 w-5 text-zinc-400" />}
@@ -246,13 +293,13 @@ export function Opportunities() {
                       <div className="pt-4 border-t border-zinc-800 flex items-center justify-between gap-4">
                         <div className="flex items-center gap-1 text-[10px] text-zinc-500 font-mono">
                           <Zap className="h-3 w-3 text-yellow-500" />
-                          EST. REWARD: +250 XP
+                          EST. REWARD: +{opp.xpReward || 250} XP
                         </div>
                         <div className="flex items-center gap-2">
                           <Button 
                             variant="ghost" 
                             size="sm" 
-                            onClick={() => toggleComplete(opp.id, opp.completed)}
+                            onClick={() => toggleComplete(opp.id, opp.completed, opp.xpReward)}
                             className={cn(
                               "h-8 border border-white/5",
                               opp.completed ? "text-emerald-500 bg-emerald-500/10" : "text-zinc-500 hover:text-white"
@@ -262,7 +309,7 @@ export function Opportunities() {
                             {opp.completed ? "Completed" : "Complete"}
                           </Button>
                           <a 
-                            href={opp.url.startsWith('http') ? opp.url : `https://www.google.com/search?q=${encodeURIComponent(opp.title + " " + opp.company)}`}
+                            href={(opp.url && opp.url.startsWith('http')) ? opp.url : `https://www.google.com/search?q=${encodeURIComponent((opp.title || "") + " " + (opp.company || ""))}`}
                             target="_blank"
                             rel="noopener noreferrer"
                           >
