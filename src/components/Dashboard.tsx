@@ -453,7 +453,8 @@ export function Dashboard() {
         console.log("Existing roadmap cleared.");
       }
 
-      const nodes = await generateInitialRoadmap('Software + Cloud + AI', profile.intensity);
+      const specToUse = resetXP ? 'Software + Cloud + AI' : (profile.specialization || 'Software + Cloud + AI');
+      const nodes = await generateInitialRoadmap(specToUse, profile.intensity);
       console.log(`Generated ${nodes.length} new nodes.`);
       
       if (nodes.length > 0) {

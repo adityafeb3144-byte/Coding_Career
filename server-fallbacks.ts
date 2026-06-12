@@ -1,72 +1,34 @@
-// src/lib/gemini.ts
-// Proxy calls to the server-side API to keep API keys secure and guarantee CORS/execution compliance.
+export interface Lecture {
+  id: string;
+  title: string;
+  completed: boolean;
+  xpReward: number;
+}
 
-export const getMentorResponse = async (
-  history: { role: string; content: string }[],
-  userProfile: any,
-  currentRoadmap?: any[],
-  onChunk?: (text: string) => void
-) => {
-  const response = await fetch("/api/gemini/mentor", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ history, userProfile, currentRoadmap }),
-  });
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: "Failed to call AI Mentor." }));
-    throw new Error(err.error || "Failed to call AI Mentor.");
-  }
+export interface Resource {
+  title: string;
+  url: string;
+  type: "video" | "article";
+  isPrimary?: boolean;
+}
 
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("No readable stream in response body.");
-  }
+export interface RoadmapNode {
+  id: string;
+  title: string;
+  description: string;
+  category: "SWE" | "Cloud" | "AI";
+  order: number;
+  dependencies: string[];
+  xpReward: number;
+  marketDemand: number;
+  lectures: Lecture[];
+  resources: Resource[];
+}
 
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let fullText = "";
-  const allFunctionCalls: any[] = [];
+export function getFallbackRoadmap(specialization: string, intensity: string): RoadmapNode[] {
+  const levelMult = intensity === "High" ? 1.5 : intensity === "Low" ? 0.75 : 1.0;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-
-    for (const line of lines) {
-      if (line.startsWith("data: ")) {
-        const dataStr = line.slice(6).trim();
-        if (dataStr === "[DONE]") {
-          break;
-        }
-        try {
-          const parsed = JSON.parse(dataStr);
-          if (parsed.text) {
-            fullText += parsed.text;
-            if (onChunk) {
-              onChunk(fullText);
-            }
-          }
-          if (parsed.functionCalls) {
-            allFunctionCalls.push(...parsed.functionCalls);
-          }
-        } catch (e) {
-          console.error("Error parsing stream chunk:", e);
-        }
-      }
-    }
-  }
-
-  return { text: fullText, functionCalls: allFunctionCalls };
-};
-
-export function getClientFallbackRoadmap(specialization: string, intensity: string) {
-  const levelMult = intensity === "casual" || intensity === "Low" ? 0.75 : intensity === "intense" || intensity === "High" ? 1.5 : 1.0;
-  
-  // Return a comprehensive list of gold-standard academic nodes
-  const baseline = [
+  return [
     {
       id: "cs50-introduction",
       title: "CS50: Introduction to Computer Science",
@@ -362,115 +324,212 @@ export function getClientFallbackRoadmap(specialization: string, intensity: stri
       ]
     }
   ];
-
-  // Bias based on specialization by adjusting order/dependencies slightly or sorting, 
-  // but returning the full 14 gold standard nodes satisfies SWE + Cloud + AI trifecta completely!
-  return baseline;
 }
 
-export const generateInitialRoadmap = async (specialization: string, intensity: string) => {
-  try {
-    const response = await fetch("/api/gemini/initial-roadmap", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ specialization, intensity }),
-    });
-    if (!response.ok) {
-      console.warn("Initial Roadmap API returned non-ok status, falling back programmatically.");
-      return getClientFallbackRoadmap(specialization, intensity);
-    }
-    const data = await response.json();
-    if (Array.isArray(data) && data.length > 0) {
-      return data;
-    }
-    console.warn("Initial Roadmap API returned empty or invalid array, falling back programmatically.");
-    return getClientFallbackRoadmap(specialization, intensity);
-  } catch (error) {
-    console.error("Initial Roadmap generation failed with exception, falling back programmatically:", error);
-    return getClientFallbackRoadmap(specialization, intensity);
-  }
-};
+export function getFallbackMarketIntelligence(specialization: string): any[] {
+  const isAI = specialization.toLowerCase().includes("ai") || specialization.toLowerCase().includes("ml");
+  const isCloud = specialization.toLowerCase().includes("cloud") || specialization.toLowerCase().includes("system") || specialization.toLowerCase().includes("devops");
 
-export const resequenceRoadmap = async (nodes: any[]) => {
-  const response = await fetch("/api/gemini/resequence-roadmap", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nodes }),
-  });
-  if (!response.ok) {
-    console.error("Resequencing failed.");
-    return [];
-  }
-  return response.json();
-};
-
-export const generateMarketIntelligence = async (specialization: string) => {
-  const response = await fetch("/api/gemini/market-intelligence", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ specialization }),
-  });
-  if (!response.ok) {
-    console.error("Market Intelligence failed.");
+  if (isAI) {
     return [
-      { skillName: "System Architecture", demandScore: 95, benchScore: 40, description: "Highly critical for scaling distributed services." },
-      { skillName: "Memory Safety (Rust)", demandScore: 88, benchScore: 15, description: "Rapidly replacing C++ in performance-critical pods." },
-      { skillName: "AI/LLM Integration", demandScore: 98, benchScore: 25, description: "Unprecedented demand for LLM-native application logic." },
-      { skillName: "Cloud Infrastructure", demandScore: 85, benchScore: 50, description: "Standard requirement for all modern deployment cycles." },
-      { skillName: "Security Engineering", demandScore: 92, benchScore: 30, description: "Increasingly vital as automated threats evolve." }
+      { skillName: "Generative AI & LLM Finetuning", demandScore: 98, benchScore: 22, description: "Managing parameter-efficient adapters like LoRA, system templates, and context windows is highly prioritized." },
+      { skillName: "Vector Databases & Semantic Search", demandScore: 94, benchScore: 35, description: "Setting up dense embedded indices using pgvector, Pinecone, or ChromaDB for high-speed search." },
+      { skillName: "Deep PyTorch Model Architectures", demandScore: 88, benchScore: 40, description: "Writing multi-dimensional custom layers, tracking weights, and training neural nodes." },
+      { skillName: "FastAPI Backend & API Grounding", demandScore: 82, benchScore: 55, description: "Serving machine learning model endpoints securely with high-concurrency event loops." },
+      { skillName: "LLM Orchestration frameworks", demandScore: 95, benchScore: 28, description: "Creating responsive autonomous agent loops, memory nodes, and execution systems." }
+    ];
+  } else if (isCloud) {
+    return [
+      { skillName: "Kubernetes Orchestration & Helm Plots", demandScore: 96, benchScore: 30, description: "Scaling multi-pod deployments, configure health probes, and orchestrating nodes." },
+      { skillName: "Infrastructure as Code (Terraform)", demandScore: 92, benchScore: 38, description: "Writing structured declarative configuration templates to provision global multi-cloud setups." },
+      { skillName: "Istio Service Mesh Systems", demandScore: 84, benchScore: 18, description: "Securing internal pod-to-pod mutual TLS, packet routing, and distributed tracing telemetry." },
+      { skillName: "CI/CD Deployment Pipelines", demandScore: 89, benchScore: 48, description: "Automating unit test runtimes, static linting checks, and secure image deployment." },
+      { skillName: "Prometheus Monitoring & Grafana Plots", demandScore: 86, benchScore: 42, description: "Tracking cluster alerts, custom query metrics, and memory utilization lines." }
+    ];
+  } else {
+    return [
+      { skillName: "Advanced System Design & Scalability", demandScore: 95, benchScore: 25, description: "Splitting monolith architectures into microservice layers using consistent routing tables." },
+      { skillName: "PostgreSQL Database Engine & Query Optimizations", demandScore: 91, benchScore: 45, description: "Profiling explain plans, designing multi-column indexes, and avoiding table locks." },
+      { skillName: "Docker Containerization Standard", demandScore: 88, benchScore: 60, description: "Writing multi-stage build files to generate minimal image files securely." },
+      { skillName: "Redis In-Memory Key Caching", demandScore: 85, benchScore: 40, description: "Caching high-frequency queries to reduce direct pressure on relational storage layers." },
+      { skillName: "TypeScript Full Stack Development", demandScore: 93, benchScore: 50, description: "Writing robust typed interfaces of backends and responsive frameworks." }
     ];
   }
-  return response.json();
-};
+}
 
-export const generateOpportunities = async (specialization: string, level: number, completedNodes: any[]) => {
-  const response = await fetch("/api/gemini/opportunities", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ specialization, level, completedNodes }),
-  });
-  if (!response.ok) {
-    console.error("Opportunities generation failed.");
-    return [];
-  }
-  return response.json();
-};
+export function getFallbackOpportunities(specialization: string, level: number, completedNodes: any[]): any[] {
+  const completedCount = completedNodes.length;
 
-export const generateMarketDemandSkill = async (specialization: string, currentRoadmap: any[]) => {
-  const response = await fetch("/api/gemini/market-demand-skill", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ specialization, currentRoadmap }),
-  });
-  if (!response.ok) {
-    console.error("Market Demand Skill generation failed.");
-    return null;
+  if (level <= 5) {
+    return [
+      {
+        id: "cs50-lecture-zero",
+        title: "Harvard CS50 Level 0 Challenge",
+        company: "Nexus Academy Challenge Group",
+        type: "Education",
+        matchScore: 100,
+        xpReward: 150,
+        description: "A fun starter milestone to help build your core CS logical foundation in scratch blocks.",
+        requirements: ["Logical blocks input"],
+        missingSkills: [],
+        url: "https://cs50.harvard.edu/x/",
+        location: "Remote Web"
+      },
+      {
+        id: "markdown-portfolio",
+        title: "Markdown Software Developer Profile",
+        company: "Github Open-Source Community",
+        type: "Project",
+        matchScore: 95,
+        xpReward: 200,
+        description: "Draft a beautifully styled README documentation sharing your curriculum and developer targets.",
+        requirements: ["Technical README layouts", "GitHub usage Basics"],
+        missingSkills: [],
+        url: "https://github.com/",
+        location: "Remote Web"
+      },
+      {
+        id: "scratch-maze-game",
+        title: "Algorithmic Maze Game Builder",
+        company: "Nexus Academy Gamers Studio",
+        type: "Project",
+        matchScore: 90,
+        xpReward: 250,
+        description: "Create an interactive maze algorithm using variable positions and conditional sensors.",
+        requirements: ["Scratch or Python Basics"],
+        missingSkills: [],
+        url: "https://scratch.mit.edu/",
+        location: "Remote"
+      }
+    ];
   }
-  return response.json();
-};
 
-export const generateDailyQuests = async (specialization: string, availableNodes: any[], completedNodes: any[]) => {
-  const response = await fetch("/api/gemini/daily-quests", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ specialization, availableNodes, completedNodes }),
-  });
-  if (!response.ok) {
-    console.error("Daily Quests generation failed.");
-    return [];
-  }
-  return response.json();
-};
+  // Intermediate-Advanced user
+  return [
+    {
+      id: "postgres-indexes-project",
+      title: "Enterprise Relational Database Profiler",
+      company: "CMU Database Study Labs",
+      type: "Project",
+      matchScore: 95,
+      xpReward: 350,
+      description: "Analyze, optimize, and benchmark SQL queries under dynamic load test operations.",
+      requirements: ["PostgreSQL and Schema Tuning"],
+      missingSkills: completedCount > 2 ? [] : ["Database Performance tuning"],
+      url: "https://db.cs.cmu.edu/",
+      location: "Remote Space"
+    },
+    {
+      id: "k8s-multi-stage-setup",
+      title: "Kubernetes Helm Deployment Operator",
+      company: "Cloud Native Software Hub",
+      type: "Open Source",
+      matchScore: 88,
+      xpReward: 400,
+      description: "Contribute to building active YAML charts supporting self-healing high-availability containers.",
+      requirements: ["Docker", "Kubernetes"],
+      missingSkills: completedCount > 5 ? [] : ["Kubernetes clusters"],
+      url: "https://kubernetes.io/",
+      location: "Hybrid Node"
+    },
+    {
+      id: "rag-llm-agent-builder",
+      title: "Autonomous Semantic RAG Document Agent",
+      company: "Nexus Intelligent Systems",
+      type: "Project",
+      matchScore: 92,
+      xpReward: 450,
+      description: "Build an active TypeScript server integrating Vector search models and dynamic tool retrieval.",
+      requirements: ["TypeScript Backends", "Large Language Models"],
+      missingSkills: completedCount > 8 ? [] : ["Vector Search engines"],
+      url: "https://js.langchain.com/",
+      location: "Remote Hybrid"
+    }
+  ];
+}
 
-export const analyzeQuestSubmission = async (questTitle: string, fileContent: string, fileName: string, mimeType?: string) => {
-  const response = await fetch("/api/gemini/analyze-quest-submission", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ questTitle, fileContent, fileName, mimeType }),
-  });
-  if (!response.ok) {
-    console.error("Quest submission analysis failed.");
-    return { isComplete: false, feedback: "Analysis failed. Mentor is currently unreachable.", score: 0 };
+export function getFallbackMarketDemandSkill(specialization: string, currentRoadmap: any[]): any {
+  return {
+    title: "Rust for Systems Engineering & WebAssembly",
+    description: "Memory-safe systems language with ultra-high raw speed, critical for cloud infrastructure and modern high-concurrency environments.",
+    category: "SWE",
+    dependencies: ["cs50-introduction"],
+    xpReward: 600,
+    marketDemand: 0.95,
+    lectures: [
+      { id: "rust-fall-l1", title: "Ownership, Borrowing Rules, and Lifetimes", completed: false, xpReward: 60 },
+      { id: "rust-fall-l2", title: "Strict Static Concurrency without Data Races", completed: false, xpReward: 60 },
+      { id: "rust-fall-l3", title: "Smart Pointers (Box, Rc, Arc, RefCell)", completed: false, xpReward: 60 },
+      { id: "rust-fall-l4", title: "WebAssembly Compiler Pipeline Setup", completed: false, xpReward: 60 },
+      { id: "rust-fall-l5", title: "High-performance Distributed Cloud Servers", completed: false, xpReward: 60 }
+    ],
+    resources: [
+      { title: "The Rust Programming Language Book", url: "https://doc.rust-lang.org/book/", type: "article", isPrimary: true },
+      { title: "Rustlings Interactive Exercises Trainer", url: "https://github.com/rust-lang/rustlings", type: "article" }
+    ]
+  };
+}
+
+export function fallbackResequence(nodes: any[]): { nodeId: string, order: number }[] {
+  const result: any[] = [];
+  const visited = new Set<string>();
+  const visiting = new Set<string>();
+
+  function visit(nodeId: string) {
+    if (visiting.has(nodeId)) {
+      return; // Avoid circular loops
+    }
+    if (!visited.has(nodeId)) {
+      visiting.add(nodeId);
+      const node = nodes.find(n => n.id === nodeId);
+      if (node && node.dependencies) {
+        for (const dep of node.dependencies) {
+          visit(dep);
+        }
+      }
+      visiting.delete(nodeId);
+      visited.add(nodeId);
+      result.push(nodeId);
+    }
   }
-  return response.json();
-};
+
+  for (const node of nodes) {
+    visit(node.id);
+  }
+
+  return result.map((id, index) => ({
+    nodeId: id,
+    order: index + 1
+  }));
+}
+
+export function getFallbackDailyQuests(specialization: string, availableNodes: any[]): any[] {
+  const currentChapter = availableNodes && availableNodes.length > 0
+    ? [...availableNodes].sort((a: any, b: any) => (a.order || 0) - (b.order || 0))[0]
+    : null;
+  const nextLectureName = currentChapter?.lectures?.find((l: any) => !l.completed)?.title || "Foundational Concepts";
+
+  return [
+    {
+      title: `Deep-Dive: ${nextLectureName}`,
+      description: `OBJECTIVE: Master the concepts of ${nextLectureName}. TASK: Write a detailed summary and create a mini practical implementation illustrating this concept in your scratchpad. DELIVERABLE: Write-up of the core mechanism and a screenshot or code sample of your implementation.`,
+      xp: 150,
+      marketDemand: currentChapter?.marketDemand || 0.8,
+      type: "technical"
+    },
+    {
+      title: "Interactive Integration Lab",
+      description: `OBJECTIVE: Synthesize your completed work inside the ${currentChapter?.title || "active"} chapter. TASK: Write a unit test suite or detailed design document modeling the data objects or services in this block. DELIVERABLE: Upload your test script or architectural diagram image.`,
+      xp: 200,
+      marketDemand: currentChapter?.marketDemand ? Math.min(1, currentChapter.marketDemand + 0.05) : 0.85,
+      type: "technical"
+    },
+    {
+      title: `${specialization} Industry Audit`,
+      description: "OBJECTIVE: Establish top-tier market orientation. TASK: Select a primary open-source repository or project architecture related to your system stack, and document its scaling bottlenecks and optimization pathways. DELIVERABLE: An engineering proposal analyzing performance metrics.",
+      xp: 250,
+      marketDemand: 0.9,
+      type: "meta"
+    }
+  ];
+}

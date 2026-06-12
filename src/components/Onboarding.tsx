@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, writeBatch } from 'firebase/firestore';
 import { db, auth, handleFirestoreError, OperationType } from '../lib/firebase';
 import { useStore } from '../store/useStore';
 import { Button } from '@/components/ui/button';
@@ -36,10 +36,24 @@ export function Onboarding() {
         skillLevels: { swe: 1, cloud: 1, ai: 1 }
       };
 
-      await setDoc(doc(db, 'users', user.uid), profileData);
+      // 1. Fetch the initial structure BEFORE altering the Firestore databases
+      // This guarantees that any slow/failing API calls happen while the user is still on the onboarding screen
+      const nodes = await generateInitialRoadmap(specialization, intensity);
+
+      if (!nodes || nodes.length === 0) {
+        throw new Error("Could not generate roadmap structure. Please try again.");
+      }
+
+      // 2. Build and commit and atomic single-request Write Batch
+      const batch = writeBatch(db);
+
+      // Write private user document
+      const userRef = doc(db, 'users', user.uid);
+      batch.set(userRef, profileData);
       
-      // Write to public profiles for leaderboard
-      await setDoc(doc(db, 'public_profiles', user.uid), {
+      // Write public profiles for leaderboard
+      const publicRef = doc(db, 'public_profiles', user.uid);
+      batch.set(publicRef, {
         uid: user.uid,
         displayName: user.displayName,
         photoURL: user.photoURL,
@@ -49,14 +63,17 @@ export function Onboarding() {
         specialization: specialization
       });
       
-      // Generate initial roadmap nodes
-      const nodes = await generateInitialRoadmap(specialization, intensity);
+      // Write all hierarchical learning nodes in the same chunk
       for (const node of nodes) {
-        await setDoc(doc(db, 'users', user.uid, 'roadmap', node.id), {
+        const nodeRef = doc(db, 'users', user.uid, 'roadmap', node.id);
+        batch.set(nodeRef, {
           ...node,
           status: node.dependencies.length === 0 ? 'available' : 'locked'
         });
       }
+
+      // 3. Commit atomically so that everything is created in an instant!
+      await batch.commit();
 
       setProfile(profileData as any);
     } catch (error) {
