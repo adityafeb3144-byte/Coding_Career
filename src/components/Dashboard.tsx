@@ -18,6 +18,7 @@ export function Dashboard() {
   const [quests, setQuests] = useState<any[]>([]);
   const [loadingQuests, setLoadingQuests] = useState(false);
   const [isInitializingRoadmap, setIsInitializingRoadmap] = useState(false);
+  const [roadmapInitError, setRoadmapInitError] = useState<string | null>(null);
   const [userRank, setUserRank] = useState<number | null>(null);
   const [nexusTotal, setNexusTotal] = useState<number>(0);
   const [volatility, setVolatility] = useState(0);
@@ -431,6 +432,7 @@ export function Dashboard() {
     console.log("Starting roadmap initialization...");
     setIsInitializingRoadmap(true);
     setIsRebuildModalOpen(false);
+    setRoadmapInitError(null);
     try {
       if (resetXP) {
         console.log("Master Reset: Resetting XP and Specialization...");
@@ -442,7 +444,16 @@ export function Dashboard() {
         await batch.commit();
       }
 
-      // Clear existing roadmap first to avoid duplicates or stale data
+      // 1. Fetch nodes FIRST to avoid empty state if Gemini or network is slow/failing
+      const specToUse = resetXP ? 'Software + Cloud + AI' : (profile.specialization || 'Software + Cloud + AI');
+      const nodes = await generateInitialRoadmap(specToUse, profile.intensity || 'balanced');
+      console.log(`Generated ${nodes.length} new nodes.`);
+      
+      if (!nodes || nodes.length === 0) {
+        throw new Error("Could not generate a valid roadmap model. Please verify your connection & try again.");
+      }
+
+      // 2. Clear existing roadmap only after we have the new nodes securely in memory
       const roadmapSnap = await getDocs(collection(db, 'users', profile.uid, 'roadmap'));
       console.log(`Found ${roadmapSnap.size} existing nodes to clear.`);
       
@@ -453,67 +464,62 @@ export function Dashboard() {
         console.log("Existing roadmap cleared.");
       }
 
-      const specToUse = resetXP ? 'Software + Cloud + AI' : (profile.specialization || 'Software + Cloud + AI');
-      const nodes = await generateInitialRoadmap(specToUse, profile.intensity);
-      console.log(`Generated ${nodes.length} new nodes.`);
-      
-      if (nodes.length > 0) {
-        const batch = writeBatch(db);
-        let remainingXp = resetXP ? 0 : profile.xp; 
-        console.log(`Smart Restore: Attempting to restore progress using ${remainingXp} XP.`);
+      const batch = writeBatch(db);
+      let remainingXp = resetXP ? 0 : profile.xp; 
+      console.log(`Smart Restore: Attempting to restore progress using ${remainingXp} XP.`);
 
-        // Sort nodes by order to ensure sequential restoration
-        const sortedNodes = [...nodes].sort((a, b) => (a.order || 0) - (b.order || 0));
+      // Sort nodes by order to ensure sequential restoration
+      const sortedNodes = [...nodes].sort((a, b) => (a.order || 0) - (b.order || 0));
 
-        for (const node of sortedNodes) {
-          const nodeRef = doc(db, 'users', profile.uid, 'roadmap', node.id);
-          
-          // Calculate total XP for this node
-          const nodeTotalXp = node.lectures.reduce((sum: number, l: any) => sum + (l.xpReward || 50), 0);
-          
-          let status = 'locked';
-          let updatedLectures = node.lectures.map((l: any) => ({ ...l, completed: false }));
+      for (const node of sortedNodes) {
+        const nodeRef = doc(db, 'users', profile.uid, 'roadmap', node.id);
+        
+        // Calculate total XP for this node
+        const nodeTotalXp = node.lectures.reduce((sum: number, l: any) => sum + (l.xpReward || 50), 0);
+        
+        let status = 'locked';
+        let updatedLectures = node.lectures.map((l: any) => ({ ...l, completed: false }));
 
-          if (remainingXp >= nodeTotalXp) {
-            // User has enough XP to have "finished" this node in the old system
-            status = 'completed';
-            updatedLectures = node.lectures.map((l: any) => ({ ...l, completed: true }));
-            remainingXp -= nodeTotalXp;
-            console.log(`Smart Restore: Auto-completed node "${node.title}"`);
-          } else if (remainingXp > 0) {
-            // Partially complete the node
-            status = 'available';
-            updatedLectures = node.lectures.map((l: any) => {
-              if (remainingXp >= (l.xpReward || 50)) {
-                remainingXp -= (l.xpReward || 50);
-                return { ...l, completed: true };
-              }
-              return l;
-            });
-            console.log(`Smart Restore: Partially completed node "${node.title}"`);
-          } else if (node.dependencies.length === 0 || sortedNodes.indexOf(node) === 0) {
-            status = 'available';
-          }
-
-          batch.set(nodeRef, {
-            ...node,
-            lectures: updatedLectures,
-            status
+        if (remainingXp >= nodeTotalXp) {
+          // User has enough XP to have "finished" this node in the old system
+          status = 'completed';
+          updatedLectures = node.lectures.map((l: any) => ({ ...l, completed: true }));
+          remainingXp -= nodeTotalXp;
+          console.log(`Smart Restore: Auto-completed node "${node.title}"`);
+        } else if (remainingXp > 0) {
+          // Partially complete the node
+          status = 'available';
+          updatedLectures = node.lectures.map((l: any) => {
+            if (remainingXp >= (l.xpReward || 50)) {
+              remainingXp -= (l.xpReward || 50);
+              return { ...l, completed: true };
+            }
+            return l;
           });
+          console.log(`Smart Restore: Partially completed node "${node.title}"`);
+        } else if (node.dependencies.length === 0 || sortedNodes.indexOf(node) === 0) {
+          status = 'available';
         }
 
-        // Second pass: Unlock nodes that have all dependencies completed
-        // (Simplified: since it's sequential, the next one after a completed one should be available)
-        await batch.commit();
-        console.log("New roadmap saved to Firestore with Smart Restore.");
+        batch.set(nodeRef, {
+          ...node,
+          lectures: updatedLectures,
+          status
+        });
       }
+
+      // Second pass: Unlock nodes that have all dependencies completed
+      // (Simplified: since it's sequential, the next one after a completed one should be available)
+      await batch.commit();
+      console.log("New roadmap saved to Firestore with Smart Restore.");
       
       // After roadmap is created, generate quests
       await generateNewQuests(true);
       console.log("Roadmap initialization complete.");
-    } catch (error) {
+    } catch (error: any) {
       console.error("Roadmap initialization failed:", error);
-      handleFirestoreError(error, OperationType.WRITE, `users/${profile.uid}/roadmap`);
+      const cleanMsg = error.message || String(error);
+      setRoadmapInitError(cleanMsg.startsWith("{") ? JSON.parse(cleanMsg).error : cleanMsg);
     } finally {
       setIsInitializingRoadmap(false);
     }
@@ -741,7 +747,16 @@ export function Dashboard() {
         >
           <Card className="bg-zinc-900 border-zinc-800 border-l-4 border-l-yellow-500 overflow-hidden">
             <CardContent className="p-6 flex flex-col md:flex-row items-center justify-between gap-6">
-              <div>
+              <div className="flex-1 w-full">
+                {roadmapInitError && (
+                  <div className="mb-4 p-4 bg-red-950/40 border border-red-500/50 rounded-xl flex items-start gap-3 text-red-300 text-sm animate-in fade-in duration-300">
+                    <AlertCircle className="h-5 w-5 shrink-0 mt-0.5 text-red-400" />
+                    <div>
+                      <p className="font-bold uppercase tracking-tight text-red-200">Roadmap Injection Exception</p>
+                      <p className="text-xs text-red-300/80 leading-relaxed mt-0.5">{roadmapInitError}</p>
+                    </div>
+                  </div>
+                )}
                 <h3 className="text-xl font-bold uppercase tracking-tighter mb-1">
                   {hasRoadmap === false ? "Roadmap Not Initialized" : "Roadmap Data Incomplete"}
                 </h3>
@@ -760,7 +775,7 @@ export function Dashboard() {
                   }
                 }} 
                 disabled={isInitializingRoadmap}
-                className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold px-8"
+                className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold px-8 self-end md:self-center"
               >
                 {isInitializingRoadmap ? (
                   <>

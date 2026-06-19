@@ -368,6 +368,149 @@ export function getClientFallbackRoadmap(specialization: string, intensity: stri
   return baseline;
 }
 
+export function sanitizeRoadmapNodes(nodes: any[], specialization: string, intensity: string): any[] {
+  if (!Array.isArray(nodes) || nodes.length < 3) {
+    console.warn("Sanitize: Nodes input is not an array or has too few items. Using secure client-side fallback.");
+    return getClientFallbackRoadmap(specialization, intensity);
+  }
+
+  const levelMult = intensity === "casual" || intensity === "Low" ? 0.75 : intensity === "intense" || intensity === "High" ? 1.5 : 1.0;
+  const sanitized: any[] = [];
+
+  for (let i = 0; i < nodes.length; i++) {
+    const raw = nodes[i];
+    if (!raw || typeof raw !== 'object') continue;
+
+    // 1. Core ID & Title
+    const rawId = raw.id || raw.uid;
+    const cleanId = (typeof rawId === 'string' && rawId.trim()) 
+      ? rawId.trim().replace(/[^a-zA-Z0-9_\-]+/g, '-') 
+      : `skill-node-${i + 1}`;
+    
+    const cleanTitle = (typeof raw.title === 'string' && raw.title.trim())
+      ? raw.title.trim()
+      : `Skill Step ${i + 1}`;
+
+    const cleanDescription = (typeof raw.description === 'string' && raw.description.trim())
+      ? raw.description.trim()
+      : `Master foundational principles and practical mechanics of ${cleanTitle}.`;
+
+    // 2. Category & Order
+    let cleanCategory = raw.category;
+    if (!["SWE", "Cloud", "AI"].includes(cleanCategory)) {
+      // Guess category from title or specialization
+      const lowerTitle = cleanTitle.toLowerCase();
+      if (lowerTitle.includes("ai") || lowerTitle.includes("ml") || lowerTitle.includes("transformer") || lowerTitle.includes("deep learning") || lowerTitle.includes("math")) {
+        cleanCategory = "AI";
+      } else if (lowerTitle.includes("cloud") || lowerTitle.includes("k8s") || lowerTitle.includes("docker") || lowerTitle.includes("network") || lowerTitle.includes("linux")) {
+        cleanCategory = "Cloud";
+      } else {
+        cleanCategory = "SWE";
+      }
+    }
+
+    const cleanOrder = typeof raw.order === 'number' && !isNaN(raw.order) ? raw.order : (i + 1);
+
+    // 3. Dependencies
+    const cleanDeps: string[] = [];
+    if (Array.isArray(raw.dependencies)) {
+      raw.dependencies.forEach((dep: any) => {
+        if (typeof dep === 'string' && dep.trim()) {
+          cleanDeps.push(dep.trim());
+        }
+      });
+    }
+
+    // 4. XP and Market Demand
+    const cleanXpReward = typeof raw.xpReward === 'number' && !isNaN(raw.xpReward) && raw.xpReward > 0 
+      ? raw.xpReward 
+      : Math.round(500 * levelMult);
+
+    const cleanMarketDemand = typeof raw.marketDemand === 'number' && !isNaN(raw.marketDemand) && raw.marketDemand >= 0.1 && raw.marketDemand <= 1.0
+      ? raw.marketDemand
+      : 0.8;
+
+    // 5. Lectures
+    const cleanLectures: any[] = [];
+    if (Array.isArray(raw.lectures) && raw.lectures.length > 0) {
+      raw.lectures.forEach((lect: any, j: number) => {
+        if (lect && typeof lect === 'object') {
+          const lId = lect.id || `l-${cleanId}-${j + 1}`;
+          const lTitle = typeof lect.title === 'string' && lect.title.trim() ? lect.title.trim() : `Lecture ${j + 1}`;
+          const lCompleted = typeof lect.completed === 'boolean' ? lect.completed : false;
+          const lXpReward = typeof lect.xpReward === 'number' && !isNaN(lect.xpReward) ? lect.xpReward : 50;
+          cleanLectures.push({ id: lId, title: lTitle, completed: lCompleted, xpReward: lXpReward });
+        }
+      });
+    }
+
+    // If lectures list was empty or malformed, populate with 5 solid sub-topics
+    if (cleanLectures.length === 0) {
+      const defaultLectures = [
+        { id: `${cleanId}-lec1`, title: "Core Architectural Concepts & Syntax Introduction", completed: false, xpReward: 50 },
+        { id: `${cleanId}-lec2`, title: "Practical Syntax, Configuration & Native Pipelines", completed: false, xpReward: 50 },
+        { id: `${cleanId}-lec3`, title: "Advanced Optimizations and State Management Patterns", completed: false, xpReward: 50 },
+        { id: `${cleanId}-lec4`, title: "Testing, Reliability Metrics & Real-World Simulation", completed: false, xpReward: 50 },
+        { id: `${cleanId}-lec5`, title: "Production Deployment Strategies & Live Integrations", completed: false, xpReward: 50 }
+      ];
+      cleanLectures.push(...defaultLectures.map(l => ({ ...l, xpReward: Math.round(l.xpReward * (levelMult || 1.0)) })));
+    }
+
+    // 6. Resources
+    const cleanResources: any[] = [];
+    if (Array.isArray(raw.resources) && raw.resources.length > 0) {
+      raw.resources.forEach((r: any) => {
+        if (r && typeof r === 'object' && typeof r.title === 'string' && typeof r.url === 'string') {
+          cleanResources.push({
+            title: r.title.trim(),
+            url: r.url.trim(),
+            type: ["video", "article"].includes(r.type) ? r.type : "video",
+            isPrimary: r.isPrimary === true
+          });
+        }
+      });
+    }
+
+    // Ensure at least one resource exists
+    if (cleanResources.length === 0) {
+      cleanResources.push({
+        title: `Official Technical Documentation for ${cleanTitle}`,
+        url: "https://www.freecodecamp.org/",
+        type: "article",
+        isPrimary: true
+      });
+    }
+
+    sanitized.push({
+      id: cleanId,
+      title: cleanTitle,
+      description: cleanDescription,
+      category: cleanCategory,
+      order: cleanOrder,
+      dependencies: cleanDeps,
+      xpReward: cleanXpReward,
+      marketDemand: cleanMarketDemand,
+      lectures: cleanLectures,
+      resources: cleanResources
+    });
+  }
+
+  // To prevent circular/missing dependencies crashing dagre layout, 
+  // ensure all dependency IDs referenced actually exist in the nodes collection
+  const allNodeIds = new Set(sanitized.map(n => n.id));
+  sanitized.forEach(node => {
+    node.dependencies = node.dependencies.filter((depId: string) => {
+      const exists = allNodeIds.has(depId);
+      if (!exists) {
+        console.warn(`Sanitize: Removing orphaned dependency "${depId}" references from node "${node.id}"`);
+      }
+      return exists;
+    });
+  });
+
+  return sanitized;
+}
+
 export const generateInitialRoadmap = async (specialization: string, intensity: string) => {
   try {
     const response = await fetch("/api/gemini/initial-roadmap", {
@@ -377,17 +520,17 @@ export const generateInitialRoadmap = async (specialization: string, intensity: 
     });
     if (!response.ok) {
       console.warn("Initial Roadmap API returned non-ok status, falling back programmatically.");
-      return getClientFallbackRoadmap(specialization, intensity);
+      return sanitizeRoadmapNodes(getClientFallbackRoadmap(specialization, intensity), specialization, intensity);
     }
     const data = await response.json();
     if (Array.isArray(data) && data.length > 0) {
-      return data;
+      return sanitizeRoadmapNodes(data, specialization, intensity);
     }
     console.warn("Initial Roadmap API returned empty or invalid array, falling back programmatically.");
-    return getClientFallbackRoadmap(specialization, intensity);
+    return sanitizeRoadmapNodes(getClientFallbackRoadmap(specialization, intensity), specialization, intensity);
   } catch (error) {
     console.error("Initial Roadmap generation failed with exception, falling back programmatically:", error);
-    return getClientFallbackRoadmap(specialization, intensity);
+    return sanitizeRoadmapNodes(getClientFallbackRoadmap(specialization, intensity), specialization, intensity);
   }
 };
 

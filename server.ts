@@ -21,22 +21,32 @@ const PORT = 3000;
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
-const getApiKey = () => {
-  const key = process.env.GEMINI_API_KEY;
-  if (!key) {
-    console.warn("GEMINI_API_KEY is not set in the environment.");
-  }
-  return key || "";
-};
+let cachedApiKey = "";
+let cachedAi: GoogleGenAI | null = null;
 
-const ai = new GoogleGenAI({
-  apiKey: getApiKey(),
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
+function getAiClient(): GoogleGenAI {
+  const currentKey = process.env.GEMINI_API_KEY || "";
+  if (cachedAi && cachedApiKey === currentKey) {
+    return cachedAi;
   }
-});
+  
+  cachedApiKey = currentKey;
+  cachedAi = new GoogleGenAI({
+    apiKey: currentKey || "EMPTY_KEY",
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      }
+    }
+  });
+  return cachedAi;
+}
+
+const ai = {
+  get models() {
+    return getAiClient().models;
+  }
+};
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -44,8 +54,8 @@ let globalRateLimitUntil = 0;
 
 async function callWithRetry<T>(
   fn: (model: string) => Promise<T>,
-  preferredModel = "gemini-3.5-flash",
-  fallbackModel = "gemini-3.1-flash-lite",
+  preferredModel = "gemini-3.1-flash-lite",
+  fallbackModel = "gemini-flash-latest",
   maxRetries = 5
 ): Promise<T> {
   if (Date.now() < globalRateLimitUntil) {
@@ -53,8 +63,15 @@ async function callWithRetry<T>(
     throw new Error(`Gemini API is in global cooldown due to rate limits. Try again in ${remaining}s.`);
   }
 
-  let currentModel = preferredModel;
+  const modelPool = [
+    preferredModel,
+    fallbackModel,
+    "gemini-3.5-flash"
+  ].filter(Boolean);
+  let modelIndex = 0;
+  let currentModel = modelPool[modelIndex];
   let lastError: any;
+
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn(currentModel);
@@ -74,7 +91,7 @@ async function callWithRetry<T>(
                           errorMessage.includes('overloaded') ||
                           errorMessage.includes('temporary');
 
-      console.error(`Gemini API Error details for model ${currentModel}:`, {
+      console.warn(`Gemini API handled retry situation for model ${currentModel}:`, {
         status,
         message: errorMessage,
         isRateLimit,
@@ -82,10 +99,12 @@ async function callWithRetry<T>(
         attempt: i + 1
       });
 
-      // On transient/rate-limiting errors, if we have a fallback model and aren't already using it, switch immediately!
-      if ((isRateLimit || isTransient) && currentModel !== fallbackModel && fallbackModel) {
-        console.warn(`Transient error or rate limit hit on model ${currentModel}. Switching to fallback model ${fallbackModel}...`);
-        currentModel = fallbackModel;
+      // On transient/rate-limiting errors, if we have another model in the pool, switch immediately!
+      if ((isRateLimit || isTransient) && modelIndex < modelPool.length - 1) {
+        modelIndex++;
+        const nextModel = modelPool[modelIndex];
+        console.warn(`Transient error or rate limit hit on model ${currentModel}. Switching to next fallback model ${nextModel}...`);
+        currentModel = nextModel;
         // Run again immediately without delay as we switched model
         continue;
       }
@@ -97,7 +116,7 @@ async function callWithRetry<T>(
           await sleep(delay);
           continue;
         } else if (isRateLimit) {
-          console.error("Gemini API quota exhausted. Entering 60s global cooldown.");
+          console.warn("Gemini API quota exhausted. Entering 60s global cooldown.");
           globalRateLimitUntil = Date.now() + 60000;
         }
       }
@@ -931,6 +950,336 @@ app.post("/api/gemini/analyze-quest-submission", async (req, res) => {
       console.error("Quest analyzer fallback failed:", fallbackError);
       res.status(500).json({ error: error.message || "Failed to analyze quest submission." });
     }
+  }
+});
+
+
+// ===============================================================
+// 9. AI Mock Interview Studio Endpoints
+// ===============================================================
+
+app.post("/api/gemini/interview/start", async (req, res) => {
+  try {
+    const { specialization, level } = req.body;
+    const expLevel = Number(level) || 1;
+    
+    const prompt = `
+      You are initiating a professional, supportive yet highly accurate technical mock interview for an engineering candidate.
+      
+      Candidate Meta Profile:
+      - Trajectory / Specialization: ${specialization || "General Software Engineering"}
+      - Experience Level: Level ${expLevel} (Level 1 is entry-level/junior, Levels 2-3 are mid-level, Levels 4-7 are senior/lead, Level 8+ is staff/principal).
+      
+      CRITICAL FOCUS - ACCORDING TO EXPERIENCE LEVEL (MANDATORY):
+      - LEVEL 1 (ENTRY/JUNIOR): Ask foundational questions! Focus on basic data structures (such as arrays, hash tables/dictionaries, lists), simple algorithms (e.g., searching, reversing strings, counting characters), clean-code principles, or standard database loops. The vocabulary MUST be warm, highly human, accessible, and clear. Avoid all advanced tech concepts (e.g., NO mention of lock contention, distributed consensus, Transformer vector layers, Sharding, or low-level concurrency buffers). Keep it completely reasonable for a beginner.
+      - LEVEL 2-3 (MID): Focus on solid modular engineering, backend web APIs, standard relational database indexes, state management, basic multi-threading, asynchronous routines, and REST architectures.
+      - LEVEL 4-7 (SENIOR): Focus on system design, scaling trade-offs, network partitions, cache consistency protocols, concurrency limits, and database locks.
+      - LEVEL 8+ (STAFF/PRINCIPAL): Focus on bleeding-edge big-tech paradigms (such as consensus models, transformer inference bottlenecks, high-throughput memory layout, lock-free queues, or real-time compiler behaviors).
+      
+      Match the demeanor and criteria of the selected interviewer:
+      1. Alex (Staff SWE & Infrastructure Architect): Pragmatic and logical. Evaluates structures and concurrency appropriate to Level.
+      2. Sophia (Engineering Manager & Systems Architect): Business-focused and scaling. Evaluates planning, readability, and team alignment.
+      3. Michael (Lead AI Systems Architect): Engineering and model-integration. Evaluates workflows and simple concepts at lower levels, and transformer dimensions at senior levels.
+      4. Nia (Lead Algorithm & Compiler Architect): Precise and mechanical. Evaluates algorithms, logic, and complexity, from basic loops (Level 1) to composite dynamic programming (Level 8+).
+      
+      Generate a brief, polite opening greeting and the FIRST interview question tailored EXACTLY to experience Level ${expLevel}. Keep the question crisp and understandable.
+      Ensure the response matches the specified JSON Schema.
+    `;
+
+    const response = await callWithRetry((m) => ai.models.generateContent({
+      model: m,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            interviewer: { type: Type.STRING, description: "Name of the interviewer: Alex, Sophia, Michael, or Nia" },
+            role: { type: Type.STRING, description: "Full role/title of the interviewer" },
+            question: { type: Type.STRING, description: "The realistic first technical interview question matching the interviewer's focus" }
+          },
+          required: ["interviewer", "role", "question"]
+        }
+      }
+    }));
+
+    const text = response.text || "{}";
+    res.json(JSON.parse(text));
+  } catch (error: any) {
+    console.error("Error at /api/gemini/interview/start:", error);
+    const expLevel = Number(req.body.level) || 1;
+    // Secure level-aware fallback
+    if (expLevel <= 1) {
+      res.json({
+        interviewer: "Nia",
+        role: "Lead Algorithm & Compiler Architect",
+        question: `Hello there! I'm Nia. Let's start with some programming fundamentals that every engineer works with daily. Could you walk me through how you'd search for an item inside an array versus a hash table (or dictionary) in your favorite programming language? Under what circumstances is one better than the other?`
+      });
+    } else if (expLevel <= 3) {
+      res.json({
+        interviewer: "Nia",
+        role: "Lead Algorithm & Compiler Architect",
+        question: `Hello! I'm Nia. Let's start with standard data modeling boundaries. Can you explain how database indexing works under the hood, and how you would design an index to speed up common read queries without slowing down writes too much?`
+      });
+    } else {
+      res.json({
+        interviewer: "Nia",
+        role: "Lead Algorithm & Compiler Architect",
+        question: `Welcome to the Nexus Technical Evaluation Panel. Given your senior profile, let's start with a core architectural challenge. Walk me through how you would design and analyze a real-time concurrent cache eviction engine (handling high operations/sec) without introducing mutex-related bottlenecks. What lock-free structures would you deploy?`
+      });
+    }
+  }
+});
+
+app.post("/api/gemini/interview/chat", async (req, res) => {
+  try {
+    const { history, userAnswer, specialization, level } = req.body;
+    const expLevel = Number(level) || 1;
+    
+    if (!history || !Array.isArray(history) || history.length === 0) {
+      res.status(400).json({ error: "Missing or invalid interview history." });
+      return;
+    }
+
+    const lastExchange = history[history.length - 1];
+    
+    const prompt = `
+      You are the Tech Interview Evaluation Engine and Panel Coordinator.
+      The candidate is giving a live mock interview for: ${specialization || "General Software Engineering"} at Experience Level ${expLevel}.
+      
+      FULL CONVERSATIONAL TRANSCRIPT AND NOTES:
+      ${JSON.stringify(history)}
+      
+      CANDIDATE'S LATEST ANSWER (FOR EVALUATION):
+      "${userAnswer}"
+      
+      YOUR MISSIONS:
+      1. EVALUATE LATEST ANSWER: Assess how effectively the candidate answered the last question: "${lastExchange.question}".
+         - Be extremely realistic and honest.
+         - If the response is extremely short, hand-wavy, simple placeholders, empty, or essentially "I don't know" / "bypass", assign a realistic score below 30 (often 0-15 depending on content). Do NOT reward participation points for non-substantive text.
+         - Analyze speech and vocal delivery metrics if present in the history message 'speechMetadata' field:
+           * Look at tone analysis ('detectedTone'), hesitation fillers count ('fillerCount'), word repetition rate ('repetitionCount'), word count and speaking rate in words-per-minute ('wpm'), pauses ('pausesCount', 'maxPauseSecs'), and voice jitter/amplitude nervousness ('shakingIndex').
+           * Integrate vocal presentation and timing into your evaluation. If there is significant stuttering (high fillerCount/repetitionCount), long silent pauses, or high shaking/tremulous amplitude index, note this in the 'critique' in a highly professional, constructive mentoring way, and slightly penalize delivery clarity (without destroying their raw technical grade).
+           * Provide specific vocal coaching tips (e.g. recommend deep breathing, measured pacing, or reducing fillers) alongside the database/algorithmic breakdown.
+         - Track accuracy, system thinking, or coding steps.
+         - Draft a brief constructive internal critique.
+         
+      2. ELECT THE NEXT INTERVIEWER: Decide who from the 4 panel members speaks next:
+         - Alex (Infrastructure & Concurrency/Fundamentals)
+         - Sophia (System Design / Logical coordination)
+         - Michael (AI & ML Architecture Pipelines or standard functional flows)
+         - Nia (Algorithms & Complexity Analysis)
+         
+      3. ASK THE NEXT TRANSITION / FOLLOW-UP QUESTION (STRICTLY LEVEL-ADAPTIVE):
+         - LEVEL 1 (ENTRY/JUNIOR): Keep it strictly fundamental! Avoid multi-node distributed consensus, lock-free eviction algorithms, sharded vectors, Transformer matrices, etc. Ask about basic loop indices, file operations, standard sorting, single database table structure, helper APIs, or clean code principles. Keep the wording warm, helpful, and highly clear of excessive jargon.
+         - LEVEL 2-3 (MID): Ask about backend modular interfaces, simple asynchronous flows, index creation on columns, simple API endpoints, state synchronization, or relational designs.
+         - LEVEL 4-7 (SENIOR): Challenge scaling boundaries, load shedding, caching patterns, or concurrency limiters.
+         - LEVEL 8+ (STAFF+): Push limits on consensus, compiler architectures, transformer inference bottlenecks, and performance profiles.
+      
+      Respond strictly in JSON matching the specified schema.
+    `;
+
+    const response = await callWithRetry((m) => ai.models.generateContent({
+      model: m,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            score: { type: Type.NUMBER, description: "Private score out of 100 for the candidate's latest answer" },
+            critique: { type: Type.STRING, description: "Brief constructive feedback for this answer" },
+            nextInterviewer: { type: Type.STRING, description: "Name of the next interviewer: Alex, Sophia, Michael, or Nia" },
+            nextRole: { type: Type.STRING, description: "Full role/title of the next interviewer" },
+            nextQuestion: { type: Type.STRING, description: "The next dynamic follow-up or transition interview question" }
+          },
+          required: ["score", "critique", "nextInterviewer", "nextRole", "nextQuestion"]
+        }
+      }
+    }));
+
+    const text = response.text || "{}";
+    res.json(JSON.parse(text));
+  } catch (error: any) {
+    console.error("Error at /api/gemini/interview/chat:", error);
+    const expLevel = Number(req.body.level) || 1;
+    if (expLevel <= 1) {
+      res.json({
+        score: 45,
+        critique: "The candidate response was extremely limited or omitted. In a junior panel review, solid active communication is expected.",
+        nextInterviewer: "Sophia",
+        nextRole: "Engineering Manager & Systems Architect",
+        nextQuestion: "That's alright, we are here to walk through this together. Let's look at another fundamental concept: basic data storage. If you had to build a simple application that keeps track of user high scores, how would you store that information locally vs on a standard cloud database? What are the basic differences?"
+      });
+    } else {
+      res.json({
+        score: 45,
+        critique: "The candidate failed to detail concurrent execution constraints in high-throughput environments.",
+        nextInterviewer: "Sophia",
+        nextRole: "Engineering Manager & Systems Architect",
+        nextQuestion: "I understand. Let's shift our gaze to the telemetry layer. If our telemetry intake starts experiencing rapid network degradation, what failover, load shedding, or throttling strategies would you put in place to ensure database transactions don't cascade lock?"
+      });
+    }
+  }
+});
+
+app.post("/api/gemini/interview/finalize", async (req, res) => {
+  try {
+    const { history, specialization, level } = req.body;
+    const expLevel = Number(level) || 1;
+    
+    if (!history || !Array.isArray(history)) {
+      res.status(400).json({ error: "Missing or invalid interview history for final evaluation." });
+      return;
+    }
+
+    // Programmatically intercept 0-answer walkouts / abandons
+    const answeredMessages = history.filter((msg: any) => msg.answer && msg.answer.trim().length > 0);
+    const totalCount = history.length || 1;
+    
+    if (answeredMessages.length === 0) {
+      res.json({
+        overallScore: 0,
+        xpReward: 0,
+        feedbackReport: `
+# 📊 TECHNICAL BOARD EVALUATION REPORT
+
+### Profile Focus: ${specialization || "General Software Engineering"} | Target Experience: Level ${expLevel}
+
+---
+
+## 📈 Performance Summary
+- **Evaluation Score**: **0 / 100**
+- **Panel Recommendation**: **Session Aborted / Left Early** 
+- **Earned XP**: **+0 XP**
+
+---
+
+## ⚠️ Session Terminated Prior to Input
+The candidate initiated the interview session but exited before submitting any responses to the board's technical questions.
+
+As a result, no performance metrics or solutions could be analyzed. This safety mechanism ensures that candidates must actively participate in order to earn XP or scoreboard points, preventing reward accumulation without engagement.
+
+### Recommended Next Steps
+1. Return to the lobby and click **"Start Mock Interview"**.
+2. Respond to the interviewer's questions via spoken voice or by typing in manual text mode.
+3. Once you speak or type answers, the board will dynamically grade them and prepare a thorough, academic-grade review of your responses! Good luck!
+        `
+      });
+      return;
+    }
+
+    const prompt = `
+      You are the Principal Technical Recruiter and Engineering Panel Lead reviewing a completed mock interview session.
+      Candidate Specialization: ${specialization || "General Software Engineering"} (Experience Level ${expLevel}).
+      
+      FULL DIALOGUE HISTORY AND INTERNAL SCORES:
+      ${JSON.stringify(history)}
+      
+      CONTEXTUAL CALCULATION RULES (MANDATORY):
+      - We want raw, brutally honest academic-grade grading.
+      - Count how many questions were asked versus how many were actually answered.
+      - If the candidate answered a question but then immediately walked out on subsequent questions (e.g., they answered 1 out of 3 questions), we MUST heavily penalize them for early abandonment. Multiply their average answer scores by a proportional penalty (such as answered_count / total_questions) or apply a severe penalty so their overallScore correctly represents their partial efforts. (Do NOT give them a free pass or a default high 80).
+      - If their answers were too brief, hand-wavy, or simple placeholders, score them strictly (e.g. 10 to 20 out of 100).
+      - Analyze speaking traits globally if present in history under 'speechMetadata':
+        * Focus on filler rates (e.g., density of 'um', 'uh', 'ah', 'like'), repetitions/shakiness (shakingIndex), long pauses, and speed (WPM).
+        * Incorporate these parameters directly into the final report to assess delivery poise, pacing under technical fire, and conversational clarity.
+      - XP reward MUST be proportionate (normally overallScore * 3 to 5 range, capped at 500 XP maximum, or 0 XP if performance is exceptionally low).
+      
+      TASK DETAILS:
+      1. Review the entire timeline and evaluate candidate depth, algorithmic skill, engineering maturity, and communication quality.
+      2. Calculate a Unified overall performance score (0 to 100) taking both technical correctness and delivery poise (smoothness, pause management, stuttering reduction) into account.
+      3. Draft a thorough, supportive, but intellectually rigorous markdown-formatted FEEDBACK REPORT. Do not use overly convoluted tech buzzwords; keep explanations simple, extremely clear, educational, and direct so a junior/mid candidate can learn.
+         The markdown REPORT should be highly structured with the following exact headers:
+         - **📈 PERFORMANCE OVERVIEW**: Conversational summary of their participation, effort, and depth.
+         - **🎙️ VOCAL POISE & DELIVERY CRITIQUE**: Comprehensive analysis of their spoken voice, tone dynamics, pauses, stuttering/fillers, voice shaking/jitter (if active), and general oral technical articulation. Provide concrete tips to level up oral presentation.
+         - **💎 STRENGTHS**: Bulleted list of areas where they showed correct reasoning or effort.
+         - **⚠️ AREAS FOR IMPROVEMENT / CRITICAL GAPS**: Detailed description of where they faltered, hand-waved, or left gaps.
+         - **🛠️ REAL-WORLD SOLUTION CORRECTIONS**: For each specific question that was asked, explain the correct, standard industrial solution in plain, clear educational language, with pseudo-code or step-by-step algorithms.
+         - **🎯 RECOMMENDED STRATEGIC PLAN**: Clear, scannable next steps tailored exactly to Level ${expLevel} candidates.
+      
+      Keep the tone highly professional, precise, educational, and thorough. Respond strictly in the JSON format matching the schema.
+    `;
+
+    const response = await callWithRetry((m) => ai.models.generateContent({
+      model: m,
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            overallScore: { type: Type.NUMBER, description: "Unified overall evaluation score between 0 and 100" },
+            xpReward: { type: Type.NUMBER, description: "XP reward proportional to performance" },
+            feedbackReport: { type: Type.STRING, description: "A detailed comprehensive Markdown feedback report explaining strengths, mistakes, providing correct solutions, and how to improve" }
+          },
+          required: ["overallScore", "xpReward", "feedbackReport"]
+        }
+      }
+    }));
+
+    const text = response.text || "{}";
+    res.json(JSON.parse(text));
+  } catch (error: any) {
+    const { history, specialization, level } = req.body || {};
+    const expLevel = Number(level) || 1;
+    console.error("Error at /api/gemini/interview/finalize:", error);
+    
+    // Proportional programmatic fallback builder for highest-grade reliability
+    const hist = history || [];
+    const ansMsgs = hist.filter((msg: any) => msg.answer && msg.answer.trim().length > 0);
+    const totalCount = hist.length || 1;
+    
+    let computedScore = 0;
+    if (ansMsgs.length > 0) {
+      const totalTurnScores = ansMsgs.reduce((acc: number, curr: any) => acc + (curr.score || 60), 0);
+      const avgAnswerScore = totalTurnScores / ansMsgs.length;
+      // Proportional penalty for incomplete sessions
+      computedScore = Math.round(avgAnswerScore * (ansMsgs.length / totalCount));
+    } else {
+      computedScore = 0;
+    }
+    
+    const finalScore = Math.max(0, Math.min(100, computedScore));
+    const finalXp = Math.round(finalScore * 3.5);
+    
+    res.json({
+      overallScore: finalScore,
+      xpReward: finalXp,
+      feedbackReport: `
+# 📊 TECHNICAL BOARD EVALUATION REPORT (FAILOVER REVIEW)
+
+### Profile Focus: ${specialization || "General Software Engineering"} | Target Experience: Level ${expLevel}
+
+---
+
+## 📈 Performance Summary
+- **Evaluation Score**: **${finalScore} / 100**
+- **Panel Recommendation**: **Session Completed with Partial Graded Metrics**
+- **Earned XP**: **+${finalXp} XP**
+
+---
+
+## 📈 Performance Overview
+You have completed a technical mock interview session. Your score of **${finalScore} / 100** has been calculated proportionally based on the questions you actively answered during the session.
+
+## 💎 Primary Strengths
+- **Fundamentals**: Demonstrated an active effort to respond to core program loops.
+- **Resilience**: Engaged directly with the active interviewer.
+
+## ⚠️ Areas for Improvement / Critical Gaps
+- **Session Completeness**: Leaving the session early or skipping questions resulted in a proportional score reduction to ensure mathematical fairness.
+- **Implementation Depth**: Ensure you speak extensively and detail edge cases such as memory handling or boundary conditions in subsequent attempts.
+
+## 🛠️ Real-world Solution Corrections
+- **Basic Array vs Hash Table**: Search in unsorted arrays is O(n), while Hash Table lookup is O(1) average. Choose arrays for tiny, fixed, ordered structures, and Hash Tables when fast key-based value lookups are required.
+- **Database Indexes**: Beneath the hood, standard systems use B-Trees or B+Trees with logarithmic read time. Adding indexes speeds up reads, but slows down writes (due to index block rewrites). Keep indexing selective!
+
+## 🎯 Recommended Strategic Plan
+1. **Completion Rigor**: Target completing every conversational turn in future sessions to bypass early-walkout score penalties.
+2. **Review Core Concepts**: Focus heavily on basic data structure runtimes (Big-O analysis) and standard system communication protocols.
+      `
+    });
   }
 });
 

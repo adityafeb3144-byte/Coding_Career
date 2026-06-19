@@ -8,6 +8,21 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Label } from '@/components/ui/label';
 import { motion } from 'motion/react';
 import { generateInitialRoadmap } from '../lib/gemini';
+import { AlertCircle } from 'lucide-react';
+
+function getCleanErrorMessage(err: any): string {
+  if (!err) return "An unexpected error occurred.";
+  const msg = err.message || String(err);
+  if (msg.startsWith("{") && msg.endsWith("}")) {
+    try {
+      const parsed = JSON.parse(msg);
+      return parsed.error || "Database operation restricted or timed out.";
+    } catch (e) {
+      // Ignore
+    }
+  }
+  return msg;
+}
 
 export function Onboarding() {
   const { user, setProfile } = useStore();
@@ -15,10 +30,12 @@ export function Onboarding() {
   const [loading, setLoading] = useState(false);
   const [specialization, setSpecialization] = useState('SWE');
   const [intensity, setIntensity] = useState('balanced');
+  const [error, setError] = useState<string | null>(null);
 
   const handleComplete = async () => {
     if (!user) return;
     setLoading(true);
+    setError(null);
     try {
       const profileData = {
         uid: user.uid,
@@ -76,9 +93,10 @@ export function Onboarding() {
       await batch.commit();
 
       setProfile(profileData as any);
-    } catch (error) {
-      console.error("Onboarding failed", error);
-      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}`);
+    } catch (err: any) {
+      console.error("Onboarding failed", err);
+      const cleanMsg = getCleanErrorMessage(err);
+      setError(cleanMsg);
     } finally {
       setLoading(false);
     }
@@ -92,6 +110,22 @@ export function Onboarding() {
           <CardDescription className="text-zinc-400 text-xs md:text-sm">Step {step} of 2: Configure your career trajectory.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 md:space-y-6">
+          {error && (
+            <div className="p-4 bg-red-950/40 border border-red-500/50 rounded-xl flex items-start gap-3 text-red-300 text-sm animate-in fade-in duration-300">
+              <AlertCircle className="h-5 w-5 shrink-0 mt-0.5 text-red-400" />
+              <div>
+                <p className="font-bold uppercase tracking-tight text-red-200">Device Initialization Critical Exception</p>
+                <p className="text-xs text-red-300/80 leading-relaxed mt-0.5">{error}</p>
+                <button 
+                  onClick={handleComplete} 
+                  className="mt-2 text-xs font-bold underline hover:text-white uppercase tracking-wider"
+                >
+                  Force Retry Code Injection
+                </button>
+              </div>
+            </div>
+          )}
+
           {step === 1 ? (
             <div className="space-y-4">
               <Label className="text-lg font-medium">Select your primary specialization</Label>

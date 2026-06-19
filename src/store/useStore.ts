@@ -16,6 +16,7 @@ interface UserProfile {
   lastActive?: string | null;
   lastActivity?: any;
   lastMarketSkillAdded?: string;
+  lastInterviewTime?: string | null;
 }
 
 interface AppState {

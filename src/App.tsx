@@ -13,12 +13,13 @@ import { Roadmap } from '@/src/components/Roadmap';
 import { Opportunities } from '@/src/components/Opportunities';
 import { Mentor } from '@/src/components/Mentor';
 import { Leaderboard } from '@/src/components/Leaderboard';
+import { Interview } from '@/src/components/Interview';
 import { Onboarding } from '@/src/components/Onboarding';
 import { PathSequencer } from '@/src/components/PathSequencer';
 import { ErrorBoundary } from '@/src/components/ErrorBoundary';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Layout, LayoutDashboard, Map, MessageSquare, Trophy, LogOut, User as UserIcon, Zap, Sparkles, AlertCircle, CheckCircle2, Globe, Menu, X, Briefcase } from 'lucide-react';
+import { Layout, LayoutDashboard, Map, MessageSquare, Trophy, LogOut, User as UserIcon, Zap, Sparkles, AlertCircle, CheckCircle2, Globe, Menu, X, Briefcase, Video } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 
@@ -361,6 +362,12 @@ function AppContent() {
             label="AI Mentor" 
           />
           <NavItem 
+            active={activeTab === 'interview'} 
+            onClick={() => { setActiveTab('interview'); setIsMobileMenuOpen(false); }} 
+            icon={<Video className="h-5 w-5" />} 
+            label="Interview Studio" 
+          />
+          <NavItem 
             active={activeTab === 'leaderboard'} 
             onClick={() => { setActiveTab('leaderboard'); setIsMobileMenuOpen(false); }} 
             icon={<Trophy className="h-5 w-5" />} 
@@ -425,6 +432,7 @@ function AppContent() {
             {activeTab === 'roadmap' && <Roadmap />}
             {activeTab === 'opportunities' && <Opportunities />}
             {activeTab === 'mentor' && <Mentor />}
+            {activeTab === 'interview' && <Interview />}
             {activeTab === 'leaderboard' && <Leaderboard />}
           </motion.div>
         </AnimatePresence>
